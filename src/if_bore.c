@@ -16,7 +16,7 @@
 
 #if defined(FEAT_BORE)
 
-#include "libroxml-2.1.2/inc/roxml.h"
+#include "roxml.h"
 
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -79,7 +79,7 @@ typedef struct bore_t {
 
 static bore_t* g_bore = 0;
 
-const char* bore_str(bore_t* b, u32 offset)
+char* bore_str(bore_t* b, u32 offset)
 {
 	return (char*)(b->data_alloc.base + offset);
 }
@@ -207,7 +207,7 @@ void bore_load_sln(const char* path)
 
 fail:
 	bore_free(b);
-	EMSG2(_("Could not open solution file "), path);
+	EMSG2(_("Could not open solution file %s"), path);
 	return;
 }
 

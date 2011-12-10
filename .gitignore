@@ -12,8 +12,6 @@ src/gvimd.exe
 src/xxd
 src/uninstal.exe
 src/install.exe
-src/infplist.xml
-src/vim.tlb
 src/*.pdb
 src/*.ilk
 *.swp
