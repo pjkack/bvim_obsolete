@@ -190,6 +190,10 @@ void qsort __ARGS((void *base, size_t elm_count, size_t elm_size, int (*cmp)(con
 #  include "if_python3.pro"
 # endif
 
+# ifdef FEAT_BORE
+#  include "if_bore.pro"
+# endif
+
 # ifdef FEAT_TCL
 #  include "if_tcl.pro"
 # endif

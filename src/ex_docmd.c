@@ -237,6 +237,9 @@ static void	ex_popup __ARGS((exarg_T *eap));
 # define do_scscope		ex_ni
 # define do_cstag		ex_ni
 #endif
+#ifndef FEAT_BORE
+# define ex_boresln ex_ni
+#endif
 #ifndef FEAT_SYN_HL
 # define ex_syntax		ex_ni
 # define ex_ownsyntax		ex_ni

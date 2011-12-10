@@ -1,0 +1,302 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="arabic.c" />
+    <ClCompile Include="blowfish.c" />
+    <ClCompile Include="buffer.c" />
+    <ClCompile Include="charset.c" />
+    <ClCompile Include="diff.c" />
+    <ClCompile Include="digraph.c" />
+    <ClCompile Include="dlldata.c" />
+    <ClCompile Include="dosinst.c" />
+    <ClCompile Include="edit.c" />
+    <ClCompile Include="eval.c" />
+    <ClCompile Include="ex_cmds.c" />
+    <ClCompile Include="ex_cmds2.c" />
+    <ClCompile Include="ex_docmd.c" />
+    <ClCompile Include="ex_eval.c" />
+    <ClCompile Include="ex_getln.c" />
+    <ClCompile Include="farsi.c" />
+    <ClCompile Include="fileio.c" />
+    <ClCompile Include="fold.c" />
+    <ClCompile Include="getchar.c" />
+    <ClCompile Include="gui.c" />
+    <ClCompile Include="gui_athena.c" />
+    <ClCompile Include="gui_at_fs.c" />
+    <ClCompile Include="gui_at_sb.c" />
+    <ClCompile Include="gui_beval.c" />
+    <ClCompile Include="gui_gtk.c" />
+    <ClCompile Include="gui_gtk_f.c" />
+    <ClCompile Include="gui_gtk_x11.c" />
+    <ClCompile Include="gui_mac.c" />
+    <ClCompile Include="gui_motif.c" />
+    <ClCompile Include="gui_photon.c" />
+    <ClCompile Include="gui_riscos.c" />
+    <ClCompile Include="gui_w16.c" />
+    <ClCompile Include="gui_w32.c" />
+    <ClCompile Include="gui_w48.c" />
+    <ClCompile Include="gui_x11.c" />
+    <ClCompile Include="gui_xmdlg.c" />
+    <ClCompile Include="gui_xmebw.c" />
+    <ClCompile Include="hangulin.c" />
+    <ClCompile Include="hardcopy.c" />
+    <ClCompile Include="hashtab.c" />
+    <ClCompile Include="if_bore.c" />
+    <ClCompile Include="if_cscope.c" />
+    <ClCompile Include="if_lua.c" />
+    <ClCompile Include="if_mzsch.c" />
+    <ClCompile Include="if_perlsfio.c" />
+    <ClCompile Include="if_python.c" />
+    <ClCompile Include="if_python3.c" />
+    <ClCompile Include="if_ruby.c" />
+    <ClCompile Include="if_sniff.c" />
+    <ClCompile Include="if_tcl.c" />
+    <ClCompile Include="if_xcmdsrv.c" />
+    <ClCompile Include="iid_ole.c" />
+    <ClCompile Include="integration.c" />
+    <ClCompile Include="main.c" />
+    <ClCompile Include="mark.c" />
+    <ClCompile Include="mbyte.c" />
+    <ClCompile Include="memfile.c" />
+    <ClCompile Include="memline.c" />
+    <ClCompile Include="menu.c" />
+    <ClCompile Include="message.c" />
+    <ClCompile Include="misc1.c" />
+    <ClCompile Include="misc2.c" />
+    <ClCompile Include="move.c" />
+    <ClCompile Include="nbdebug.c" />
+    <ClCompile Include="netbeans.c" />
+    <ClCompile Include="normal.c" />
+    <ClCompile Include="ops.c" />
+    <ClCompile Include="option.c" />
+    <ClCompile Include="os_amiga.c" />
+    <ClCompile Include="os_beos.c" />
+    <ClCompile Include="os_mac_conv.c" />
+    <ClCompile Include="os_msdos.c" />
+    <ClCompile Include="os_mswin.c" />
+    <ClCompile Include="os_qnx.c" />
+    <ClCompile Include="os_riscos.c" />
+    <ClCompile Include="os_unix.c" />
+    <ClCompile Include="os_vms.c" />
+    <ClCompile Include="os_vms_mms.c" />
+    <ClCompile Include="os_w32dll.c" />
+    <ClCompile Include="os_w32exe.c" />
+    <ClCompile Include="os_win16.c" />
+    <ClCompile Include="os_win32.c" />
+    <ClCompile Include="popupmnu.c" />
+    <ClCompile Include="pty.c" />
+    <ClCompile Include="quickfix.c" />
+    <ClCompile Include="regexp.c" />
+    <ClCompile Include="screen.c" />
+    <ClCompile Include="search.c" />
+    <ClCompile Include="sha256.c" />
+    <ClCompile Include="spell.c" />
+    <ClCompile Include="syntax.c" />
+    <ClCompile Include="tag.c" />
+    <ClCompile Include="term.c" />
+    <ClCompile Include="termlib.c" />
+    <ClCompile Include="ui.c" />
+    <ClCompile Include="undo.c" />
+    <ClCompile Include="uninstal.c" />
+    <ClCompile Include="version.c" />
+    <ClCompile Include="vimrun.c" />
+    <ClCompile Include="window.c" />
+    <ClCompile Include="workshop.c" />
+    <ClCompile Include="wsdebug.c" />
+    <ClCompile Include="xpm_w32.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="arabic.h" />
+    <ClInclude Include="ascii.h" />
+    <ClInclude Include="dosinst.h" />
+    <ClInclude Include="ex_cmds.h" />
+    <ClInclude Include="farsi.h" />
+    <ClInclude Include="feature.h" />
+    <ClInclude Include="glbl_ime.h" />
+    <ClInclude Include="globals.h" />
+    <ClInclude Include="gui.h" />
+    <ClInclude Include="guiw16rc.h" />
+    <ClInclude Include="gui_at_sb.h" />
+    <ClInclude Include="gui_beval.h" />
+    <ClInclude Include="gui_gtk_f.h" />
+    <ClInclude Include="gui_gtk_vms.h" />
+    <ClInclude Include="gui_riscos.h" />
+    <ClInclude Include="gui_w32_rc.h" />
+    <ClInclude Include="gui_x11_pm.h" />
+    <ClInclude Include="gui_xmebw.h" />
+    <ClInclude Include="gui_xmebwp.h" />
+    <ClInclude Include="if_cscope.h" />
+    <ClInclude Include="if_mzsch.h" />
+    <ClInclude Include="if_ole.h" />
+    <ClInclude Include="if_py_both.h" />
+    <ClInclude Include="if_sniff.h" />
+    <ClInclude Include="integration.h" />
+    <ClInclude Include="keymap.h" />
+    <ClInclude Include="macros.h" />
+    <ClInclude Include="nbdebug.h" />
+    <ClInclude Include="option.h" />
+    <ClInclude Include="os_amiga.h" />
+    <ClInclude Include="os_beos.h" />
+    <ClInclude Include="os_dos.h" />
+    <ClInclude Include="os_mac.h" />
+    <ClInclude Include="os_mint.h" />
+    <ClInclude Include="os_msdos.h" />
+    <ClInclude Include="os_os2_cfg.h" />
+    <ClInclude Include="os_qnx.h" />
+    <ClInclude Include="os_riscos.h" />
+    <ClInclude Include="os_unix.h" />
+    <ClInclude Include="os_unixx.h" />
+    <ClInclude Include="os_vms_conf.h" />
+    <ClInclude Include="os_win16.h" />
+    <ClInclude Include="os_win32.h" />
+    <ClInclude Include="proto.h" />
+    <ClInclude Include="regexp.h" />
+    <ClInclude Include="structs.h" />
+    <ClInclude Include="term.h" />
+    <ClInclude Include="version.h" />
+    <ClInclude Include="vim.h" />
+    <ClInclude Include="vimio.h" />
+    <ClInclude Include="vimtbar.h" />
+    <ClInclude Include="workshop.h" />
+    <ClInclude Include="wsdebug.h" />
+    <ClInclude Include="xpm_w32.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Make_mvc.mak" />
+    <None Include="proto\blowfish.pro" />
+    <None Include="proto\buffer.pro" />
+    <None Include="proto\charset.pro" />
+    <None Include="proto\diff.pro" />
+    <None Include="proto\digraph.pro" />
+    <None Include="proto\edit.pro" />
+    <None Include="proto\eval.pro" />
+    <None Include="proto\ex_cmds.pro" />
+    <None Include="proto\ex_cmds2.pro" />
+    <None Include="proto\ex_docmd.pro" />
+    <None Include="proto\ex_eval.pro" />
+    <None Include="proto\ex_getln.pro" />
+    <None Include="proto\fileio.pro" />
+    <None Include="proto\fold.pro" />
+    <None Include="proto\getchar.pro" />
+    <None Include="proto\gui.pro" />
+    <None Include="proto\gui_athena.pro" />
+    <None Include="proto\gui_beval.pro" />
+    <None Include="proto\gui_gtk.pro" />
+    <None Include="proto\gui_gtk_x11.pro" />
+    <None Include="proto\gui_mac.pro" />
+    <None Include="proto\gui_motif.pro" />
+    <None Include="proto\gui_photon.pro" />
+    <None Include="proto\gui_riscos.pro" />
+    <None Include="proto\gui_w16.pro" />
+    <None Include="proto\gui_w32.pro" />
+    <None Include="proto\gui_x11.pro" />
+    <None Include="proto\gui_xmdlg.pro" />
+    <None Include="proto\hangulin.pro" />
+    <None Include="proto\hardcopy.pro" />
+    <None Include="proto\hashtab.pro" />
+    <None Include="proto\if_bore.pro" />
+    <None Include="proto\if_cscope.pro" />
+    <None Include="proto\if_lua.pro" />
+    <None Include="proto\if_mzsch.pro" />
+    <None Include="proto\if_ole.pro" />
+    <None Include="proto\if_perl.pro" />
+    <None Include="proto\if_perlsfio.pro" />
+    <None Include="proto\if_python.pro" />
+    <None Include="proto\if_python3.pro" />
+    <None Include="proto\if_ruby.pro" />
+    <None Include="proto\if_tcl.pro" />
+    <None Include="proto\if_xcmdsrv.pro" />
+    <None Include="proto\main.pro" />
+    <None Include="proto\mark.pro" />
+    <None Include="proto\mbyte.pro" />
+    <None Include="proto\memfile.pro" />
+    <None Include="proto\memline.pro" />
+    <None Include="proto\menu.pro" />
+    <None Include="proto\message.pro" />
+    <None Include="proto\misc1.pro" />
+    <None Include="proto\misc2.pro" />
+    <None Include="proto\move.pro" />
+    <None Include="proto\netbeans.pro" />
+    <None Include="proto\normal.pro" />
+    <None Include="proto\ops.pro" />
+    <None Include="proto\option.pro" />
+    <None Include="proto\os_amiga.pro" />
+    <None Include="proto\os_mac_conv.pro" />
+    <None Include="proto\os_msdos.pro" />
+    <None Include="proto\os_mswin.pro" />
+    <None Include="proto\os_qnx.pro" />
+    <None Include="proto\os_riscos.pro" />
+    <None Include="proto\os_unix.pro" />
+    <None Include="proto\os_vms.pro" />
+    <None Include="proto\os_win16.pro" />
+    <None Include="proto\os_win32.pro" />
+    <None Include="proto\popupmnu.pro" />
+    <None Include="proto\pty.pro" />
+    <None Include="proto\quickfix.pro" />
+    <None Include="proto\regexp.pro" />
+    <None Include="proto\screen.pro" />
+    <None Include="proto\search.pro" />
+    <None Include="proto\sha256.pro" />
+    <None Include="proto\spell.pro" />
+    <None Include="proto\syntax.pro" />
+    <None Include="proto\tag.pro" />
+    <None Include="proto\term.pro" />
+    <None Include="proto\termlib.pro" />
+    <None Include="proto\ui.pro" />
+    <None Include="proto\undo.pro" />
+    <None Include="proto\version.pro" />
+    <None Include="proto\window.pro" />
+    <None Include="proto\workshop.pro" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{16433EF0-D94D-4D98-A879-65379C76A3E1}</ProjectGuid>
+    <Keyword>MakeFileProj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <OutDir>$(ProjectDir)</OutDir>
+    <IntDir>$(ProjectDir)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <NMakeOutput>gvimd.exe</NMakeOutput>
+    <NMakePreprocessorDefinitions>WIN32;_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <NMakeBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=yes</NMakeBuildCommandLine>
+    <NMakeCleanCommandLine>nmake -f Make_mvc.mak clean DEBUG=yes GUI=yes</NMakeCleanCommandLine>
+    <NMakeReBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=yes</NMakeReBuildCommandLine>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <NMakeOutput>gvimd.exe</NMakeOutput>
+    <NMakePreprocessorDefinitions>WIN32;NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
