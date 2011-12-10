@@ -257,6 +257,12 @@ CSCOPE_OBJ   = $(OBJDIR)/if_cscope.obj
 CSCOPE_DEFS  = -DFEAT_CSCOPE
 !endif
 
+!if "$(BORE)" == "yes"
+# BORE - Include support for various cool things
+BORE_OBJ   = $(OBJDIR)/if_bore.obj $(OBJDIR)/roxml.obj $(OBJDIR)/roxml-internal.obj $(OBJDIR)/roxml-parse-engine.obj
+BORE_DEFS  = -DFEAT_BORE
+!endif
+
 !ifndef NETBEANS
 NETBEANS = $(GUI)
 !endif
@@ -319,7 +325,7 @@ WINVER = 0x0400
 #VIMRUNTIMEDIR = somewhere
 
 CFLAGS = -c /W3 /nologo $(CVARS) -I. -Iproto -DHAVE_PATHDEF -DWIN32 \
-		$(SNIFF_DEFS) $(CSCOPE_DEFS) $(NETBEANS_DEFS) \
+		$(SNIFF_DEFS) $(CSCOPE_DEFS) $(BORE_DEFS) $(NETBEANS_DEFS) \
 		$(NBDEBUG_DEFS) $(XPM_DEFS) \
 		$(DEFINES) -DWINVER=$(WINVER) -D_WIN32_WINNT=$(WINVER) \
 		/Fo$(OUTDIR)/ 
@@ -476,7 +482,7 @@ CFLAGS = $(CFLAGS) /Zl /MTd
 
 INCL =	vim.h os_win32.h ascii.h feature.h globals.h keymap.h macros.h \
 	proto.h option.h structs.h term.h $(SNIFF_INCL) $(CSCOPE_INCL) \
-	$(NBDEBUG_INCL)
+	$(NBDEBUG_INCL) 
 
 OBJ = \
 	$(OUTDIR)\blowfish.obj \
@@ -892,12 +898,12 @@ all:	$(VIM).exe vimrun.exe install.exe uninstal.exe xxd/xxd.exe \
 
 $(VIM).exe: $(OUTDIR) $(OBJ) $(GUI_OBJ) $(OLE_OBJ) $(OLE_IDL) $(MZSCHEME_OBJ) \
 		$(LUA_OBJ) $(PERL_OBJ) $(PYTHON_OBJ) $(PYTHON3_OBJ) $(RUBY_OBJ) $(TCL_OBJ) \
-		$(SNIFF_OBJ) $(CSCOPE_OBJ) $(NETBEANS_OBJ) $(XPM_OBJ) \
+		$(SNIFF_OBJ) $(CSCOPE_OBJ) $(BORE_OBJ) $(NETBEANS_OBJ) $(XPM_OBJ) \
 		version.c version.h
 	$(CC) $(CFLAGS) version.c
 	$(link) $(LINKARGS1) -out:$(VIM).exe $(OBJ) $(GUI_OBJ) $(OLE_OBJ) \
 		$(LUA_OBJ) $(MZSCHEME_OBJ) $(PERL_OBJ) $(PYTHON_OBJ) $(PYTHON3_OBJ) $(RUBY_OBJ) \
-		$(TCL_OBJ) $(SNIFF_OBJ) $(CSCOPE_OBJ) $(NETBEANS_OBJ) \
+		$(TCL_OBJ) $(SNIFF_OBJ) $(CSCOPE_OBJ) $(BORE_OBJ) $(NETBEANS_OBJ) \
 		$(XPM_OBJ) $(OUTDIR)\version.obj $(LINKARGS2)
 
 $(VIM): $(VIM).exe
@@ -1033,6 +1039,14 @@ $(OUTDIR)/gui_beval.obj:	$(OUTDIR) gui_beval.c $(INCL) $(GUI_INCL)
 $(OUTDIR)/gui_w32.obj:	$(OUTDIR) gui_w32.c gui_w48.c $(INCL) $(GUI_INCL)
 
 $(OUTDIR)/if_cscope.obj: $(OUTDIR) if_cscope.c  $(INCL)
+
+$(OUTDIR)/if_bore.obj: $(OUTDIR) if_bore.c  $(INCL)
+
+$(OUTDIR)/roxml.obj: $(OUTDIR) roxml.c  $(INCL)
+
+$(OUTDIR)/roxml-internal.obj: $(OUTDIR) roxml-internal.c  $(INCL)
+
+$(OUTDIR)/roxml-parse-engine.obj: $(OUTDIR) roxml-parse-engine.c  $(INCL)
 
 $(OUTDIR)/if_lua.obj: $(OUTDIR) if_lua.c  $(INCL)
 	$(CC) $(CFLAGS) $(LUA_INC) if_lua.c
