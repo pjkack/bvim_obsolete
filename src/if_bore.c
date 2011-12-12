@@ -101,9 +101,21 @@ typedef struct bore_t {
 	bore_alloc_t file_alloc;
 
 	bore_alloc_t data_alloc; // bulk data (filenames, strings, etc)
+
+	bore_alloc_t fsearch_alloc; // scratch pad for reading a complete file for searching
 } bore_t;
 
 static bore_t* g_bore = 0;
+
+static void bore_free(bore_t* b)
+{
+	if (!b) return;
+	bore_alloc_free(&b->file_alloc);
+	bore_alloc_free(&b->data_alloc);
+	bore_alloc_free(&b->proj_alloc);
+	bore_alloc_free(&b->fsearch_alloc);
+	vim_free(b);
+}
 
 static char* bore_str(bore_t* b, u32 offset)
 {
@@ -233,23 +245,6 @@ static int bore_sort_and_cleanup_files(bore_t* b)
 
 	// sort
 	qsort_s(files, b->file_count, sizeof(u32), bore_sort_filename, b);
-	//{
-	//	int n = b->file_count;
-	//	int swapped;
-	//	do {
-	//		int i;
-	//		swapped = 0;
-	//		for (i = 1; i < n; ++i) {
-	//			if (stricmp(bore_str(b, files[i-1]), bore_str(b, files[i])) > 0) {
-	//				int tmp = files[i];
-	//				files[i] = files[i-1];
-	//				files[i-1] = tmp;
-	//				swapped = 1;
-	//			}
-	//		}
-	//		--n;
-	//	} while(swapped);
-	//}
 
 	// uniq
 	{
@@ -274,15 +269,6 @@ static int bore_sort_and_cleanup_files(bore_t* b)
 	return OK;
 }
 
-static void bore_free(bore_t* b)
-{
-	if (!b) return;
-	bore_alloc_free(&b->file_alloc);
-	bore_alloc_free(&b->data_alloc);
-	bore_alloc_free(&b->proj_alloc);
-	vim_free(b);
-}
-
 static void bore_load_sln(const char* path)
 {
 	char buf[BORE_MAX_PATH];
@@ -296,6 +282,7 @@ static void bore_load_sln(const char* path)
 	bore_prealloc(&b->data_alloc, 8*1024*1024);
 	bore_prealloc(&b->file_alloc, sizeof(u32)*64*1024);
 	bore_prealloc(&b->proj_alloc, sizeof(bore_proj_t)*256);
+	bore_prealloc(&b->fsearch_alloc, 1*1024*1024);
 
 	// Allocate something small, so that we can use offset 0 as NULL
 	bore_alloc(&b->data_alloc, 1);
@@ -365,6 +352,91 @@ static int bore_canonicalize(const char* src, char* dst, DWORD* attr)
 	return OK;
 }
 
+static int bore_text_search(const char* text, int text_len, const char* what, int what_len, int* out, const int* out_end)
+{
+	// http://www-igm.univ-mlv.fr/~lecroq/string/index.html
+#define BTSOUTPUT(j) if (p != out_end) *p++ = j; else goto done;
+	const char* y = text;
+	int n = text_len;
+	const char* x = what;
+	int m = what_len;
+	int* p = out;
+	int j, k, ell;
+
+	/* Preprocessing */
+	if (x[0] == x[1]) {
+		k = 2;
+		ell = 1;
+	}
+	else {
+		k = 1;
+		ell = 2;
+	}
+
+	/* Searching */
+	j = 0;
+	while (j <= n - m) {
+		if (x[1] != y[j + 1])
+			j += k;
+		else {
+			if (memcmp(x + 2, y + j + 2, m - 2) == 0 && x[0] == y[j]) {
+				BTSOUTPUT(j);
+			}
+			j += ell;
+		}
+	}
+done:
+	return p - out;
+#undef BTSOUTPUT
+}
+
+static void bore_find(bore_t* b, char* what)
+{
+	int i;
+	u32* files = (u32*)b->file_alloc.base;
+	int found = 0;
+
+	for(i = 0; i < b->file_count; ++i) {
+		WCHAR fn[BORE_MAX_PATH];
+		HANDLE f;
+		DWORD filesize;
+		DWORD remaining;
+		char* p;
+		int match_positions[100];
+		int result = MultiByteToWideChar(CP_UTF8, 0, bore_str(b, files[i]), -1, fn, BORE_MAX_PATH);
+		if (result == 0)
+			continue;
+		f = CreateFileW(fn, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, 0);
+		if (f == INVALID_HANDLE_VALUE)
+			goto skip;
+		filesize = GetFileSize(f, 0);
+		if (filesize == INVALID_FILE_SIZE)
+			goto skip;
+		b->fsearch_alloc.cursor = b->fsearch_alloc.base;
+		bore_alloc(&b->fsearch_alloc, filesize);
+		p = b->fsearch_alloc.base;
+		remaining = filesize;
+		while(remaining) {
+			DWORD readbytes;
+			if(!ReadFile(f, p + filesize - remaining, remaining, &readbytes, 0))
+				goto skip;
+			remaining -= readbytes;
+		}
+		found += bore_text_search(p, filesize, what, strlen(what), match_positions, 
+			match_positions + sizeof(match_positions)/sizeof(match_positions[0]));
+		CloseHandle(f);
+		continue;
+skip:
+		CloseHandle(f);
+	}
+
+	{
+		char buf[100];
+		sprintf(buf, "Matches: %d", found);
+		MSG(_(buf));
+	}
+}
+
 #endif
 
 /* Only do the following when the feature is enabled.  Needed for "make
@@ -380,6 +452,21 @@ void ex_boresln __ARGS((exarg_T *eap))
 		DWORD elapsed;
 		char mess[100];
 		bore_load_sln((char*)eap->arg);
+		elapsed = GetTickCount() - start;
+		sprintf(mess, "Elapsed time: %u ms", elapsed);
+		MSG(_(mess));
+	}
+}
+
+void ex_borefind __ARGS((exarg_T *eap))
+{
+	if (!g_bore) {
+		EMSG(_("Load a solution first with boresln"));
+    } else {
+		DWORD start = GetTickCount();
+		DWORD elapsed;
+		char mess[100];
+		bore_find(g_bore, (char*)eap->arg);
 		elapsed = GetTickCount() - start;
 		sprintf(mess, "Elapsed time: %u ms", elapsed);
 		MSG(_(mess));
