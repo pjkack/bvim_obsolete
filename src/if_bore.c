@@ -23,7 +23,7 @@ TODO:
 #include "regexp.h"
 
 #if defined(FEAT_BORE)
-
+ 
 #include "roxml.h"
 #include <windows.h>
 
@@ -92,6 +92,8 @@ typedef struct bore_t {
 	u32 sln_path; // abs path of solution
 	u32 sln_dir;  // abs dir of solution
 
+	char_u* filelist_tmp_file; // name of temporary filelist file
+
 	// array of bore_proj_t (all projects in the solution)
 	int proj_count;
 	bore_alloc_t proj_alloc; 
@@ -110,6 +112,7 @@ static bore_t* g_bore = 0;
 static void bore_free(bore_t* b)
 {
 	if (!b) return;
+	vim_free(b->filelist_tmp_file);
 	bore_alloc_free(&b->file_alloc);
 	bore_alloc_free(&b->data_alloc);
 	bore_alloc_free(&b->proj_alloc);
@@ -269,6 +272,23 @@ static int bore_sort_and_cleanup_files(bore_t* b)
 	return OK;
 }
 
+static int bore_write_filelist_to_tempfile(bore_t* b)
+{
+	FILE* f;
+	int i;
+	b->filelist_tmp_file = vim_tempname('b');
+	if (!b->filelist_tmp_file)
+		return FAIL;
+	f = fopen(b->filelist_tmp_file, "w");
+	if (!f)
+		return FAIL;
+	for(i = 0; i < b->file_count; ++i) {
+		fprintf(f, "%s\n", bore_str(b, ((u32*)b->file_alloc.base)[i]));
+	}
+	fclose(f);
+	return OK;
+}	
+
 static void bore_load_sln(const char* path)
 {
 	char buf[BORE_MAX_PATH];
@@ -303,6 +323,9 @@ static void bore_load_sln(const char* path)
 		goto fail;
 
 	if (FAIL == bore_sort_and_cleanup_files(b))
+		goto fail;
+
+	if (FAIL == bore_write_filelist_to_tempfile(b))
 		goto fail;
 
 	g_bore = b;
@@ -390,6 +413,53 @@ done:
 #undef BTSOUTPUT
 }
 
+static void test(bore_t* b)
+{
+	FILE	    *f;
+	char_u	    *tmp = vim_tempname('c');
+	qf_info_T   *qi = NULL;
+	win_T	    *wp = NULL;
+	int i;
+
+	f = mch_fopen((char *)tmp, "w");
+	if (f == NULL) {
+	    EMSG2(_(e_notopen), tmp);
+		return;
+	}
+
+	for (i = 0; i < 10; ++i) {
+		fprintf(f, "%s\n", bore_str(b, ((u32*)(b->file_alloc.base))[i]));
+	}
+	fclose(f);
+
+	wp = curwin;
+	if (qf_init(wp, tmp, (char_u *)"%f", 1, "borefind results") > 0) {
+# ifdef FEAT_WINDOWS
+//		if (postponed_split != 0)
+		{
+			win_split(postponed_split > 0 ? postponed_split : 0,
+				postponed_split_flags);
+#  ifdef FEAT_SCROLLBIND
+			curwin->w_p_scb = FALSE;
+#  endif
+//			postponed_split = 0;
+		}
+# endif
+
+//			if (use_ll) {
+			/*
+			* In the location list window, use the displayed location
+			* list. Otherwise, use the location list for the window.
+			*/
+			qi = (bt_quickfix(wp->w_buffer) && wp->w_llist_ref != NULL) ?  wp->w_llist_ref : wp->w_llist;
+//			}
+		qf_jump(qi, 0, 0, 1);
+	}
+	mch_remove(tmp);
+	vim_free(tmp);
+}
+
+
 static void bore_find(bore_t* b, char* what)
 {
 	int i;
@@ -429,6 +499,8 @@ static void bore_find(bore_t* b, char* what)
 skip:
 		CloseHandle(f);
 	}
+
+	test(b);
 
 	{
 		char buf[100];
@@ -471,6 +543,164 @@ void ex_borefind __ARGS((exarg_T *eap))
 		sprintf(mess, "Elapsed time: %u ms", elapsed);
 		MSG(_(mess));
 	}
+}
+
+void ex_boreopen __ARGS((exarg_T *eap))
+{
+	char_u	*arg;
+	char_u  maparg[128];
+	int		n;
+#ifdef FEAT_WINDOWS
+	win_T	*wp;
+#endif
+	char_u	*p;
+	int		empty_fnum = 0;
+	int		alt_fnum = 0;
+	buf_T	*buf;
+	FILE    *filelist_fd = 0;
+
+	if (!g_bore || !g_bore->filelist_tmp_file) {
+		EMSG(_("Load a solution first with boresln"));
+		return;
+	}
+
+	if (eap != NULL)
+	{
+		/*
+		* A ":boreopen" command ends at the first LF, or at a '|' that is
+		* followed by some text.  Set nextcmd to the following command.
+		*/
+		for (arg = eap->arg; *arg; ++arg)
+		{
+			if (*arg == '\n' || *arg == '\r'
+				|| (*arg == '|' && arg[1] != NUL && arg[1] != '|'))
+			{
+				*arg++ = NUL;
+				eap->nextcmd = arg;
+				break;
+			}
+		}
+		arg = eap->arg;
+
+		if (eap->skip)	    /* not executing commands */
+			return;
+	}
+	else
+		arg = (char_u *)"";
+
+	/* remove trailing blanks */
+	p = arg + STRLEN(arg) - 1;
+	while (p > arg && vim_iswhite(*p) && p[-1] != '\\')
+		*p-- = NUL;
+
+#ifdef FEAT_GUI
+	need_mouse_correct = TRUE;
+#endif
+
+	/*
+	* Re-use an existing help window or open a new one.
+	*/
+	if (!curwin->w_buffer->b_help)
+	{
+#ifdef FEAT_WINDOWS
+		for (wp = firstwin; wp != NULL; wp = wp->w_next)
+			if (wp->w_buffer != NULL && wp->w_buffer->b_help)
+				break;
+		if (wp != NULL && wp->w_buffer->b_nwindows > 0)
+			win_enter(wp, TRUE);
+		else
+#endif
+		{
+#ifdef FEAT_WINDOWS
+			/* Split off help window; put it at far top if no position
+			* specified, the current window is vertically split and
+			* narrow. */
+			n = WSP_HELP;
+# ifdef FEAT_VERTSPLIT
+			if (cmdmod.split == 0 && curwin->w_width != Columns
+				&& curwin->w_width < 80)
+				n |= WSP_TOP;
+# endif
+			if (win_split(0, n) == FAIL)
+				goto erret;
+#else
+			/* use current window */
+			if (!can_abandon(curbuf, FALSE))
+				goto erret;
+#endif
+
+#ifdef FEAT_WINDOWS
+			if (curwin->w_height < p_hh)
+				win_setheight((int)p_hh);
+#endif
+
+			alt_fnum = curbuf->b_fnum;
+			(void)do_ecmd(0, g_bore->filelist_tmp_file, NULL, NULL, ECMD_LASTL,
+				ECMD_HIDE + ECMD_SET_HELP,
+#ifdef FEAT_WINDOWS
+				NULL  /* buffer is still open, don't store info */
+#else
+				curwin
+#endif
+				);
+			if (!cmdmod.keepalt)
+				curwin->w_alt_fnum = alt_fnum;
+			empty_fnum = curbuf->b_fnum;
+		}
+	}
+
+	//if ((filelist_fd = mch_fopen(g_bore->filelist_tmp_file, READBIN)) == NULL)
+	//{
+	//	smsg((char_u *)_("Sorry, filelist file \"%s\" not found"), g_bore->filelist_tmp_file);
+	//	goto erret;
+	//}
+	//fclose(filelist_fd);
+
+	// Press enter to open the file on the current line
+	strcpy(maparg, "<buffer> <CR> :Boreopenselection<CR>");
+	if (0 != do_map(0, maparg, NORMAL, FALSE))
+		goto erret;
+
+	if (!p_im)
+		restart_edit = 0;	    /* don't want insert mode in help file */
+
+	/* Delete the empty buffer if we're not using it.  Careful: autocommands
+	* may have jumped to another window, check that the buffer is not in a
+	* window. */
+	if (empty_fnum != 0 && curbuf->b_fnum != empty_fnum)
+	{
+		buf = buflist_findnr(empty_fnum);
+		if (buf != NULL && buf->b_nwindows == 0)
+			wipe_buffer(buf, TRUE);
+	}
+
+	/* keep the previous alternate file */
+	if (alt_fnum != 0 && curwin->w_alt_fnum == empty_fnum && !cmdmod.keepalt)
+		curwin->w_alt_fnum = alt_fnum;
+erret:
+	(void)restart_edit;
+}
+
+// Internal functions
+
+// Open the file on the current row in the current buffer 
+void ex_Boreopenselection __ARGS((exarg_T *eap))
+{
+	char_u* fn;
+	exarg_T ea;
+	if (!g_bore)
+		return;
+	fn = vim_strsave(ml_get_curline());
+	if (!fn)
+		return;
+
+	win_close(curwin, TRUE);
+
+	memset(&ea, 0, sizeof(ea));
+	ea.arg = fn;
+	ea.cmdidx = CMD_edit;
+	do_exedit(&ea, NULL);
+	vim_free(fn);
 }
 
 #endif

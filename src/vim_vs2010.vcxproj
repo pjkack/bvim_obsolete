@@ -285,7 +285,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <NMakeOutput>gvimd.exe</NMakeOutput>
-    <NMakePreprocessorDefinitions>WIN32;_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <NMakePreprocessorDefinitions>HAVE_PATHDEF;WIN32;FEAT_BORE;WINVER=0x0500;_WIN32_WINNT=0x0500;_DEBUG;DEBUG;FEAT_GUI_W32;DYNAMIC_ICONV;DYNAMIC_GETTEXT;FEAT_BIG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <NMakeBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=yes</NMakeBuildCommandLine>
     <NMakeCleanCommandLine>nmake -f Make_mvc.mak clean DEBUG=yes GUI=yes</NMakeCleanCommandLine>
     <NMakeReBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=yes</NMakeReBuildCommandLine>
