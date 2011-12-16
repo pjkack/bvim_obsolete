@@ -284,15 +284,18 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <NMakeOutput>gvimd.exe</NMakeOutput>
+    <NMakeOutput>bvimd.exe</NMakeOutput>
     <NMakePreprocessorDefinitions>HAVE_PATHDEF;WIN32;FEAT_BORE;WINVER=0x0500;_WIN32_WINNT=0x0500;_DEBUG;DEBUG;FEAT_GUI_W32;DYNAMIC_ICONV;DYNAMIC_GETTEXT;FEAT_BIG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <NMakeBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=yes</NMakeBuildCommandLine>
     <NMakeCleanCommandLine>nmake -f Make_mvc.mak clean DEBUG=yes GUI=yes</NMakeCleanCommandLine>
     <NMakeReBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=yes</NMakeReBuildCommandLine>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <NMakeOutput>gvimd.exe</NMakeOutput>
+    <NMakeOutput>bvim.exe</NMakeOutput>
     <NMakePreprocessorDefinitions>WIN32;NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <NMakeBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=no</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>nmake -f make_mvc.mak BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=no</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>nmake -f make_mvc.mak clean BORE=yes GUI=yes OLE=no MBYTE=no IME=no GIME=no  SNIFF=no CSCOPE=no NETBEANS=no CPUNR=i686 WINVER=0x0500  debug=no</NMakeCleanCommandLine>
   </PropertyGroup>
   <ItemDefinitionGroup>
   </ItemDefinitionGroup>

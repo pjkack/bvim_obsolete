@@ -567,7 +567,11 @@ CFLAGS = $(CFLAGS) -DFEAT_MBYTE
 SUBSYSTEM = windows
 CFLAGS = $(CFLAGS) -DFEAT_GUI_W32
 RCFLAGS = $(RCFLAGS) -DFEAT_GUI_W32
+!if "$(BORE)" == "yes"
+VIM = b$(VIM)
+!else
 VIM = g$(VIM)
+!endif
 GUI_INCL = \
 	gui.h \
 	regexp.h \
@@ -594,6 +598,7 @@ GUI_LIB = \
 !else
 SUBSYSTEM = console
 !endif
+
 
 # iconv.dll library (dynamically loaded)
 !ifndef ICONV

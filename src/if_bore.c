@@ -88,6 +88,10 @@ typedef struct bore_proj_t {
 	u32 project_path;
 } bore_proj_t;
 
+typedef struct bore_ini_t {
+	int borebuf_height; // Default height of borebuf window
+} bore_ini_t;
+
 typedef struct bore_t {
 	u32 sln_path; // abs path of solution
 	u32 sln_dir;  // abs dir of solution
@@ -105,6 +109,8 @@ typedef struct bore_t {
 	bore_alloc_t data_alloc; // bulk data (filenames, strings, etc)
 
 	bore_alloc_t fsearch_alloc; // scratch pad for reading a complete file for searching
+
+	bore_ini_t ini;
 } bore_t;
 
 static bore_t* g_bore = 0;
@@ -287,7 +293,12 @@ static int bore_write_filelist_to_tempfile(bore_t* b)
 	}
 	fclose(f);
 	return OK;
-}	
+}
+
+static void bore_load_ini(bore_ini_t* ini, const char* dirpath)
+{
+	ini->borebuf_height = 30;
+}
 
 static void bore_load_sln(const char* path)
 {
@@ -316,6 +327,8 @@ static void bore_load_sln(const char* path)
 	if (pc)
 		*++pc = 0;
 	
+	bore_load_ini(&b->ini, bore_str(b, b->sln_dir));
+
 	if (FAIL == bore_extract_projects_from_sln(b, buf))
 		goto fail;
 
@@ -340,19 +353,19 @@ fail:
 static void bore_print_sln()
 {
 	if (g_bore) {
-		int i;
+//		int i;
 		char status[BORE_MAX_PATH];
 		sprintf(status, "%s, %d projects, %d files", bore_str(g_bore, g_bore->sln_path),
 			g_bore->proj_count, g_bore->file_count);
 		MSG(_(status));
 
 
-		for (i = 0; i < g_bore->file_count; ++i) {
-			char* fn = bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[i]);
-			ml_append(i, fn, strlen(fn)+1, 0);
-		}
+		//for (i = 0; i < g_bore->file_count; ++i) {
+		//	char* fn = bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[i]);
+		//	ml_append(i, fn, strlen(fn)+1, 0);
+		//}
 
-		update_screen(VALID);
+		//update_screen(VALID);
 	}
 }
 
@@ -413,66 +426,92 @@ done:
 #undef BTSOUTPUT
 }
 
-static void test(bore_t* b)
+typedef struct bore_match_t {
+	u32 file_index;
+	u32 row;
+	u32 column;
+	const char* linestart;
+} bore_match_t;
+
+static void bore_resolve_match_location(int file_index, const char* p, u32 filesize, 
+	bore_match_t* match, bore_match_t* match_end, int* offset, int offsetCount)
 {
-	FILE	    *f;
-	char_u	    *tmp = vim_tempname('c');
-	qf_info_T   *qi = NULL;
-	win_T	    *wp = NULL;
-	int i;
+	const int* offset_end = offset + offsetCount;
+	const char* pbegin = p;
+	const char* linestart = p;
+	int line = 1;
 
-	f = mch_fopen((char *)tmp, "w");
-	if (f == NULL) {
-	    EMSG2(_(e_notopen), tmp);
-		return;
-	}
-
-	for (i = 0; i < 10; ++i) {
-		fprintf(f, "%s\n", bore_str(b, ((u32*)(b->file_alloc.base))[i]));
-	}
-	fclose(f);
-
-	wp = curwin;
-	if (qf_init(wp, tmp, (char_u *)"%f", 1, "borefind results") > 0) {
-# ifdef FEAT_WINDOWS
-//		if (postponed_split != 0)
-		{
-			win_split(postponed_split > 0 ? postponed_split : 0,
-				postponed_split_flags);
-#  ifdef FEAT_SCROLLBIND
-			curwin->w_p_scb = FALSE;
-#  endif
-//			postponed_split = 0;
+	while(offset < offset_end && match < match_end) {
+		const char* pend = pbegin + *offset;
+		while (p < pend) {
+			if (*p++ == '\n') {
+				++line;
+				linestart = p;
+			}
 		}
-# endif
-
-//			if (use_ll) {
-			/*
-			* In the location list window, use the displayed location
-			* list. Otherwise, use the location list for the window.
-			*/
-			qi = (bt_quickfix(wp->w_buffer) && wp->w_llist_ref != NULL) ?  wp->w_llist_ref : wp->w_llist;
-//			}
-		qf_jump(qi, 0, 0, 1);
+		match->file_index = file_index;
+		match->row = line;
+		match->column = p - linestart;
+		match->linestart = linestart;
+		++match;
+		++offset;
 	}
-	mch_remove(tmp);
-	vim_free(tmp);
 }
 
+static void bore_save_match_to_file(bore_t* b, FILE* cf, const char* fileend, 
+	const bore_match_t* match, int match_count)
+{
+	int i;
+	for (i = 0; i < match_count; ++i, ++match) {
+		const char* p = match->linestart;
+		while (p < fileend && *p != '\n' && *p != '\r')
+			++p;
+		fprintf(cf, "%s:%d:%d:", bore_str(b, ((u32*)(b->file_alloc.base))[match->file_index]), 
+			match->row, match->column);
+		fwrite(match->linestart, p - match->linestart, 1, cf);
+		fwrite("\n", 1, 1, cf);
+	}
+}
+
+static void bore_display_search_result(bore_t* b, const char* filename)
+{
+	exarg_T eap;
+	char* title[] = {"Bore Find", 0};
+
+	memset(&eap, 0, sizeof(eap));
+	//eap.cmdidx = CMD_copen;
+	eap.cmdidx = CMD_cwindow;
+	eap.arg = (char*)filename;
+	eap.cmdlinep = title;
+	ex_cfile(&eap);
+}
 
 static void bore_find(bore_t* b, char* what)
 {
+	enum { MaxMatch = 1000, MaxMatchPerFile = 100 };
 	int i;
 	u32* files = (u32*)b->file_alloc.base;
 	int found = 0;
+	char_u *tmp = vim_tempname('f');
+	FILE* cf = 0;
+	bore_match_t* match = 0;
 
-	for(i = 0; i < b->file_count; ++i) {
+	cf = mch_fopen((char *)tmp, "wb");
+	if (cf == NULL) {
+	    EMSG2(_(e_notopen), tmp);
+		goto fail;
+	}
+
+	match = (bore_match_t*)alloc(MaxMatch * sizeof(bore_match_t));
+
+	for(i = 0; (i < b->file_count) && (found < MaxMatch); ++i) {
 		WCHAR fn[BORE_MAX_PATH];
 		HANDLE f;
 		DWORD filesize;
 		DWORD remaining;
 		char* p;
-		int match_positions[100];
+		int match_offset[MaxMatchPerFile];
+		int match_in_file;
 		int result = MultiByteToWideChar(CP_UTF8, 0, bore_str(b, files[i]), -1, fn, BORE_MAX_PATH);
 		if (result == 0)
 			continue;
@@ -492,68 +531,48 @@ static void bore_find(bore_t* b, char* what)
 				goto skip;
 			remaining -= readbytes;
 		}
-		found += bore_text_search(p, filesize, what, strlen(what), match_positions, 
-			match_positions + sizeof(match_positions)/sizeof(match_positions[0]));
+		
 		CloseHandle(f);
+		
+		match_in_file = bore_text_search(p, filesize, what, strlen(what), &match_offset[0], 
+			&match_offset[MaxMatchPerFile]);
+
+		if ((MaxMatch - found) < match_in_file)
+			match_in_file = MaxMatch - found;
+
+		bore_resolve_match_location(i, p, filesize, &match[found], &match[MaxMatch], match_offset,
+			match_in_file);
+
+		bore_save_match_to_file(b, cf, p + filesize, &match[found], match_in_file);
+
+		found += match_in_file;
 		continue;
 skip:
 		CloseHandle(f);
 	}
 
-	test(b);
+	fclose(cf);
 
-	{
-		char buf[100];
-		sprintf(buf, "Matches: %d", found);
-		MSG(_(buf));
-	}
+	bore_display_search_result(b, tmp);
+	mch_remove(tmp);
+fail:
+	vim_free(tmp);
+	vim_free(match);
+	if (cf) fclose(cf);
 }
 
-#endif
-
-/* Only do the following when the feature is enabled.  Needed for "make
- * depend". */
-#if defined(FEAT_BORE) || defined(PROTO)
-
-void ex_boresln __ARGS((exarg_T *eap))
+// Display filename in the borebuf.
+// Window height is at least minheight (if possible)
+// mappings is a null-terminated array of strings with buffer mappings of the form "<key> <command>"
+static void bore_show_borebuf(const char* filename, int minheight, const char** mappings)
 {
-    if (*eap->arg == NUL) {
-		bore_print_sln();
-    } else {
-		DWORD start = GetTickCount();
-		DWORD elapsed;
-		char mess[100];
-		bore_load_sln((char*)eap->arg);
-		elapsed = GetTickCount() - start;
-		sprintf(mess, "Elapsed time: %u ms", elapsed);
-		MSG(_(mess));
-	}
-}
-
-void ex_borefind __ARGS((exarg_T *eap))
-{
-	if (!g_bore) {
-		EMSG(_("Load a solution first with boresln"));
-    } else {
-		DWORD start = GetTickCount();
-		DWORD elapsed;
-		char mess[100];
-		bore_find(g_bore, (char*)eap->arg);
-		elapsed = GetTickCount() - start;
-		sprintf(mess, "Elapsed time: %u ms", elapsed);
-		MSG(_(mess));
-	}
-}
-
-void ex_boreopen __ARGS((exarg_T *eap))
-{
-	char_u	*arg;
-	char_u  maparg[128];
+	//char_u	*arg;
+	char_u  maparg[512];
 	int		n;
 #ifdef FEAT_WINDOWS
 	win_T	*wp;
 #endif
-	char_u	*p;
+//	char_u	*p;
 	int		empty_fnum = 0;
 	int		alt_fnum = 0;
 	buf_T	*buf;
@@ -564,47 +583,47 @@ void ex_boreopen __ARGS((exarg_T *eap))
 		return;
 	}
 
-	if (eap != NULL)
-	{
-		/*
-		* A ":boreopen" command ends at the first LF, or at a '|' that is
-		* followed by some text.  Set nextcmd to the following command.
-		*/
-		for (arg = eap->arg; *arg; ++arg)
-		{
-			if (*arg == '\n' || *arg == '\r'
-				|| (*arg == '|' && arg[1] != NUL && arg[1] != '|'))
-			{
-				*arg++ = NUL;
-				eap->nextcmd = arg;
-				break;
-			}
-		}
-		arg = eap->arg;
+	//if (eap != NULL)
+	//{
+	//	/*
+	//	* A ":boreopen" command ends at the first LF, or at a '|' that is
+	//	* followed by some text.  Set nextcmd to the following command.
+	//	*/
+	//	for (arg = eap->arg; *arg; ++arg)
+	//	{
+	//		if (*arg == '\n' || *arg == '\r'
+	//			|| (*arg == '|' && arg[1] != NUL && arg[1] != '|'))
+	//		{
+	//			*arg++ = NUL;
+	//			eap->nextcmd = arg;
+	//			break;
+	//		}
+	//	}
+	//	arg = eap->arg;
 
-		if (eap->skip)	    /* not executing commands */
-			return;
-	}
-	else
-		arg = (char_u *)"";
+	//	if (eap->skip)	    /* not executing commands */
+	//		return;
+	//}
+	//else
+	//	arg = (char_u *)"";
 
-	/* remove trailing blanks */
-	p = arg + STRLEN(arg) - 1;
-	while (p > arg && vim_iswhite(*p) && p[-1] != '\\')
-		*p-- = NUL;
+	///* remove trailing blanks */
+	//p = arg + STRLEN(arg) - 1;
+	//while (p > arg && vim_iswhite(*p) && p[-1] != '\\')
+	//	*p-- = NUL;
 
 #ifdef FEAT_GUI
 	need_mouse_correct = TRUE;
 #endif
 
 	/*
-	* Re-use an existing help window or open a new one.
+	* Re-use an existing bore window or open a new one.
 	*/
-	if (!curwin->w_buffer->b_help)
+	if (!curwin->w_buffer->b_borebuf)
 	{
 #ifdef FEAT_WINDOWS
 		for (wp = firstwin; wp != NULL; wp = wp->w_next)
-			if (wp->w_buffer != NULL && wp->w_buffer->b_help)
+			if (wp->w_buffer != NULL && wp->w_buffer->b_borebuf)
 				break;
 		if (wp != NULL && wp->w_buffer->b_nwindows > 0)
 			win_enter(wp, TRUE);
@@ -630,36 +649,37 @@ void ex_boreopen __ARGS((exarg_T *eap))
 #endif
 
 #ifdef FEAT_WINDOWS
-			if (curwin->w_height < p_hh)
-				win_setheight((int)p_hh);
+			if (curwin->w_height < minheight)
+				win_setheight(minheight);
 #endif
 
 			alt_fnum = curbuf->b_fnum;
-			(void)do_ecmd(0, g_bore->filelist_tmp_file, NULL, NULL, ECMD_LASTL,
-				ECMD_HIDE + ECMD_SET_HELP,
+			// Piggyback on the help window which has the properties we want for borebuf too.
+			// (readonly, can't insert text, etc)
+			(void)do_ecmd(0, (char*)filename, NULL, NULL, ECMD_LASTL, ECMD_HIDE + ECMD_SET_HELP,
 #ifdef FEAT_WINDOWS
 				NULL  /* buffer is still open, don't store info */
 #else
 				curwin
 #endif
 				);
+
 			if (!cmdmod.keepalt)
 				curwin->w_alt_fnum = alt_fnum;
 			empty_fnum = curbuf->b_fnum;
+
+			// This is the borebuf
+			curwin->w_buffer->b_borebuf = 1;
 		}
 	}
 
-	//if ((filelist_fd = mch_fopen(g_bore->filelist_tmp_file, READBIN)) == NULL)
-	//{
-	//	smsg((char_u *)_("Sorry, filelist file \"%s\" not found"), g_bore->filelist_tmp_file);
-	//	goto erret;
-	//}
-	//fclose(filelist_fd);
-
 	// Press enter to open the file on the current line
-	strcpy(maparg, "<buffer> <CR> :Boreopenselection<CR>");
-	if (0 != do_map(0, maparg, NORMAL, FALSE))
-		goto erret;
+	while(*mappings) {
+		sprintf(maparg, "<buffer> %s", *mappings);
+		if (0 != do_map(0, maparg, NORMAL, FALSE))
+			goto erret;
+		++mappings;
+	}
 
 	if (!p_im)
 		restart_edit = 0;	    /* don't want insert mode in help file */
@@ -677,8 +697,57 @@ void ex_boreopen __ARGS((exarg_T *eap))
 	/* keep the previous alternate file */
 	if (alt_fnum != 0 && curwin->w_alt_fnum == empty_fnum && !cmdmod.keepalt)
 		curwin->w_alt_fnum = alt_fnum;
+
+	return;
 erret:
-	(void)restart_edit;
+	EMSG(_("Could not open borebuf"));
+}
+
+#endif
+
+/* Only do the following when the feature is enabled.  Needed for "make
+ * depend". */
+#if defined(FEAT_BORE) || defined(PROTO)
+
+void ex_boresln __ARGS((exarg_T *eap))
+{
+    if (*eap->arg == NUL) {
+		bore_print_sln();
+    } else {
+		//DWORD start = GetTickCount();
+		//DWORD elapsed;
+		//char mess[100];
+		bore_load_sln((char*)eap->arg);
+		//elapsed = GetTickCount() - start;
+		//sprintf(mess, "Elapsed time: %u ms", elapsed);
+		bore_print_sln();
+		//MSG(_(mess));
+	}
+}
+
+void ex_borefind __ARGS((exarg_T *eap))
+{
+	if (!g_bore) {
+		EMSG(_("Load a solution first with boresln"));
+    } else {
+		DWORD start = GetTickCount();
+		DWORD elapsed;
+		char mess[100];
+		bore_find(g_bore, (char*)eap->arg);
+		elapsed = GetTickCount() - start;
+		sprintf(mess, "Elapsed time: %u ms", elapsed);
+		MSG(_(mess));
+	}
+}
+
+void ex_boreopen __ARGS((exarg_T *eap))
+{
+	if (!g_bore)
+		EMSG(_("Load a solution first with boresln"));
+	else {
+		const char* mappings[] = {"<CR> :ZZBoreopenselection<CR>", 0};
+		bore_show_borebuf(g_bore->filelist_tmp_file, g_bore->ini.borebuf_height, mappings);
+	}
 }
 
 // Internal functions
