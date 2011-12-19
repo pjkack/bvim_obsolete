@@ -341,6 +341,9 @@ static void bore_load_sln(const char* path)
 	if (FAIL == bore_write_filelist_to_tempfile(b))
 		goto fail;
 
+	sprintf(buf, "let g:bore_filelist_file=\'%s\'", b->filelist_tmp_file);
+    do_cmdline_cmd(buf);
+	
 	g_bore = b;
 	return;
 
@@ -362,7 +365,7 @@ static void bore_print_sln()
 
 		//for (i = 0; i < g_bore->file_count; ++i) {
 		//	char* fn = bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[i]);
-		//	ml_append(i, fn, strlen(fn)+1, 0);
+		//	ml_append(i		//	, fn, strlen(fn)+1, 0);
 		//}
 
 		//update_screen(VALID);
