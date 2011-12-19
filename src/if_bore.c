@@ -717,14 +717,14 @@ void ex_boresln __ARGS((exarg_T *eap))
     if (*eap->arg == NUL) {
 		bore_print_sln();
     } else {
-		//DWORD start = GetTickCount();
-		//DWORD elapsed;
-		//char mess[100];
+		DWORD start = GetTickCount();
+		DWORD elapsed;
+		char mess[100];
 		bore_load_sln((char*)eap->arg);
-		//elapsed = GetTickCount() - start;
-		//sprintf(mess, "Elapsed time: %u ms", elapsed);
+		elapsed = GetTickCount() - start;
+		sprintf(mess, "Elapsed time: %u ms", elapsed);
 		bore_print_sln();
-		//MSG(_(mess));
+		MSG(_(mess));
 	}
 }
 
