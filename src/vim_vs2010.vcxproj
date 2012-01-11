@@ -44,12 +44,13 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;HAVE_PATHDEF;WIN32;FEAT_BORE;WINVER=0x0500;_WIN32_WINNT=0x0500;_DEBUG;DEBUG;FEAT_GUI_W32;DYNAMIC_ICONV;DYNAMIC_GETTEXT;FEAT_BIG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;HAVE_PATHDEF;FEAT_BORE;WINVER=0x0601;_WIN32_WINNT=0x0601;DEBUG;FEAT_GUI_W32;DYNAMIC_ICONV;DYNAMIC_GETTEXT;FEAT_BIG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>.;proto;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <TargetMachine>MachineX86</TargetMachine>
@@ -60,7 +61,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;HAVE_PATHDEF;WIN32;FEAT_BORE;WINVER=0x0500;_WIN32_WINNT=0x0500;NDEBUG;FEAT_GUI_W32;DYNAMIC_ICONV;DYNAMIC_GETTEXT;FEAT_BIG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;HAVE_PATHDEF;FEAT_BORE;WINVER=0x0601;_WIN32_WINNT=0x0601;FEAT_GUI_W32;DYNAMIC_ICONV;DYNAMIC_GETTEXT;FEAT_BIG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>.;proto;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <WarningLevel>Level3</WarningLevel>
@@ -105,7 +106,10 @@
     <ClCompile Include="gui_w32.c" />
     <ClCompile Include="hardcopy.c" />
     <ClCompile Include="hashtab.c" />
-    <ClCompile Include="if_bore.c" />
+    <ClCompile Include="if_bore.c">
+      <CompileAs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Default</CompileAs>
+    </ClCompile>
+    <ClCompile Include="if_bore_find.cpp" />
     <ClCompile Include="main.c" />
     <ClCompile Include="mark.c" />
     <ClCompile Include="mbyte.c" />
@@ -250,6 +254,7 @@
     <ClInclude Include="gui_x11_pm.h" />
     <ClInclude Include="gui_xmebw.h" />
     <ClInclude Include="gui_xmebwp.h" />
+    <ClInclude Include="if_bore.h" />
     <ClInclude Include="if_cscope.h" />
     <ClInclude Include="if_mzsch.h" />
     <ClInclude Include="if_ole.h" />

@@ -183,6 +183,9 @@
     <ClCompile Include="roxml.c">
       <Filter>bore</Filter>
     </ClCompile>
+    <ClCompile Include="if_bore_find.cpp">
+      <Filter>bore</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="vim.rc">
@@ -458,6 +461,9 @@
     </ClInclude>
     <ClInclude Include="xpm_w32.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="if_bore.h">
+      <Filter>bore</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

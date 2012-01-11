@@ -9,41 +9,26 @@
  * See README.txt for an overview of the Vim source code.
  */
 
-/*
-TODO:
-
-
-
-
-*/
-
 #include <stdio.h>
 #include <string.h>
 #include "vim.h"
 #include "regexp.h"
+#include "if_bore.h"
 
 #if defined(FEAT_BORE)
  
 #include "roxml.h"
 #include <windows.h>
 
-typedef unsigned char u8;
-typedef unsigned int u32;
-
-#define BORE_MAX_SMALL_PATH 256
-#define BORE_MAX_PATH 1024
 
 static int bore_canonicalize (const char* src, char* dst, DWORD* attr);
 
-typedef struct bore_alloc_t {
-	u8* base;
-	u8* end;
-	u8* cursor;
-} bore_alloc_t;
-
 void bore_prealloc(bore_alloc_t* p, size_t size)
 {
-	p->base = (u8*)alloc(size);
+	p->base = (u8*)alloc(size + BORE_CACHELINE);
+	p->offset = BORE_CACHELINE - ((size_t)(p->base) & (BORE_CACHELINE - 1));
+	p->base += p->offset;
+	assert(((size_t)(p->base) & (BORE_CACHELINE - 1)) == 0);
 	p->end  = p->base + size;
 	p->cursor = p->base;
 }
@@ -57,14 +42,19 @@ void* bore_alloc(bore_alloc_t* p, size_t size)
 		size_t newcapacity = capacity * 2;
 		size_t currentsize = p->cursor - p->base;
 		size_t newsize = currentsize + size;
+		size_t offsetnew;
 		u8* basenew;
 		if (newsize > newcapacity)
 			newcapacity = newsize * 2;
-		basenew = alloc(newcapacity);
+		basenew = alloc(newcapacity + BORE_CACHELINE);
+		offsetnew = BORE_CACHELINE - ((size_t)basenew & (BORE_CACHELINE - 1));
+		basenew += offsetnew;
+		assert(((size_t)basenew & (BORE_CACHELINE - 1)) == 0);
 		memcpy(basenew, p->base, currentsize);
-		vim_free(p->base);
+		vim_free(p->base - p->offset);
 		p->cursor = basenew + currentsize;
 		p->base = basenew;
+		p->offset = offsetnew;
 		p->end = p->base + newcapacity;
 	}
 	mem = p->cursor;
@@ -80,53 +70,26 @@ void bore_alloc_trim(bore_alloc_t* p, size_t size)
 void bore_alloc_free(bore_alloc_t* p)
 {
 	if (p->base)
-		vim_free(p->base);
+		vim_free(p->base - p->offset);
 }
-
-typedef struct bore_proj_t {
-	u32 project_name;
-	u32 project_path;
-} bore_proj_t;
-
-typedef struct bore_ini_t {
-	int borebuf_height; // Default height of borebuf window
-} bore_ini_t;
-
-typedef struct bore_t {
-	u32 sln_path; // abs path of solution
-	u32 sln_dir;  // abs dir of solution
-
-	char_u* filelist_tmp_file; // name of temporary filelist file
-
-	// array of bore_proj_t (all projects in the solution)
-	int proj_count;
-	bore_alloc_t proj_alloc; 
-
-	// array of files in the solution
-	int file_count;
-	bore_alloc_t file_alloc;
-
-	bore_alloc_t data_alloc; // bulk data (filenames, strings, etc)
-
-	bore_alloc_t fsearch_alloc; // scratch pad for reading a complete file for searching
-
-	bore_ini_t ini;
-} bore_t;
 
 static bore_t* g_bore = 0;
 
 static void bore_free(bore_t* b)
 {
+	int i;
 	if (!b) return;
 	vim_free(b->filelist_tmp_file);
 	bore_alloc_free(&b->file_alloc);
 	bore_alloc_free(&b->data_alloc);
 	bore_alloc_free(&b->proj_alloc);
-	bore_alloc_free(&b->fsearch_alloc);
+	for (i = 0; i < BORE_SEARCH_JOBS; ++i) {
+		bore_alloc_free(&b->search[i].filedata);
+	}
 	vim_free(b);
 }
 
-static char* bore_str(bore_t* b, u32 offset)
+char* bore_str(bore_t* b, u32 offset)
 {
 	return (char*)(b->data_alloc.base + offset);
 }
@@ -136,7 +99,7 @@ static u32 bore_strndup(bore_t* b, const char* s, int len)
 	char* p = (char*)bore_alloc(&b->data_alloc, len + 1);
 	memcpy(p, s, len);
 	p[len] = 0;
-	return p - b->data_alloc.base;
+	return p - (char*)b->data_alloc.base;
 }
 
 static void bore_append_vcxproj_files(bore_t* b, node_t** result, int result_count,
@@ -172,7 +135,7 @@ static void bore_load_vcxproj_filters(bore_t* b, const char* path)
 		return;
 
 	strcpy(filename_buf, path);
-	filename_part = vim_strrchr(filename_buf, '\\') + 1;
+	filename_part = (char*)vim_strrchr((char_u*)filename_buf, '\\') + 1;
 	path_part_len = filename_part - filename_buf;
 
 	//result = roxml_xpath(root, "//ClInclude/@Include", &result_count);
@@ -190,9 +153,9 @@ static int bore_extract_projects_from_sln(bore_t* b, const char* sln_path)
 	char buf[BORE_MAX_PATH];
 	char buf2[BORE_MAX_PATH];
 	int result = FAIL;
-	int sln_dir_len = vim_strrchr((char*)sln_path, '\\') - sln_path + 1;
+	int sln_dir_len = (char*)vim_strrchr((char_u*)sln_path, '\\') - sln_path + 1;
 
-	regmatch.regprog = vim_regcomp("^Project(\"{.\\{-}}\") = \"\\(.\\{-}\\)\", \"\\(.\\{-}\\)\"", RE_MAGIC + RE_STRING);
+	regmatch.regprog = vim_regcomp((char_u*)"^Project(\"{.\\{-}}\") = \"\\(.\\{-}\\)\", \"\\(.\\{-}\\)\"", RE_MAGIC + RE_STRING);
 	regmatch.rm_ic = 0;
 
 	f = fopen(sln_path, "rb");
@@ -200,7 +163,7 @@ static int bore_extract_projects_from_sln(bore_t* b, const char* sln_path)
 		goto done;
 	}
 
-	while (0 == vim_fgets(buf, sizeof(buf), f)) {
+	while (0 == vim_fgets((char_u*)buf, sizeof(buf), f)) {
 	    if (vim_regexec_nl(&regmatch, buf, (colnr_T)0)) {
 			bore_proj_t* proj = (bore_proj_t*)bore_alloc(&b->proj_alloc, sizeof(bore_proj_t));
 			++b->proj_count;
@@ -235,6 +198,7 @@ static int bore_extract_files_from_projects(bore_t* b)
 		if (proj[i].project_path) {
 			sprintf(path, "%s.filters", bore_str(b, proj[i].project_path));
 			bore_load_vcxproj_filters(b, path);
+			bore_load_vcxproj_filters(b, bore_str(b, proj[i].project_path));
 		}
 	}
 	return OK;
@@ -261,7 +225,7 @@ static int bore_sort_and_cleanup_files(bore_t* b)
 		u32* pw = files + 1;
 		u32* pend = files + b->file_count;
 		int n;
-		while(pr != pend) {
+		while(pr < pend) {
 			if (0 != stricmp(bore_str(b, *pr), bore_str(b, *(pr-1)))) {
 				*pw++ = *pr++;
 			} else {
@@ -282,14 +246,22 @@ static int bore_write_filelist_to_tempfile(bore_t* b)
 {
 	FILE* f;
 	int i;
+	const char *slndir;
+	int slndirlen;
 	b->filelist_tmp_file = vim_tempname('b');
 	if (!b->filelist_tmp_file)
 		return FAIL;
 	f = fopen(b->filelist_tmp_file, "w");
 	if (!f)
 		return FAIL;
+	slndir = bore_str(b, b->sln_dir);
+	slndirlen = strlen(slndir);
 	for(i = 0; i < b->file_count; ++i) {
-		fprintf(f, "%s\n", bore_str(b, ((u32*)b->file_alloc.base)[i]));
+		const char *fn = bore_str(b, ((u32*)b->file_alloc.base)[i]);
+		if (strncmp(fn, slndir, slndirlen) == 0)
+			fprintf(f, "%s\n", fn + slndirlen);
+		else
+			fprintf(f, "%s\n", fn);
 	}
 	fclose(f);
 	return OK;
@@ -303,6 +275,7 @@ static void bore_load_ini(bore_ini_t* ini, const char* dirpath)
 static void bore_load_sln(const char* path)
 {
 	char buf[BORE_MAX_PATH];
+	int i;
 	char* pc;
 	bore_t* b = (bore_t*)alloc(sizeof(bore_t));
 	memset(b, 0, sizeof(bore_t));
@@ -313,7 +286,10 @@ static void bore_load_sln(const char* path)
 	bore_prealloc(&b->data_alloc, 8*1024*1024);
 	bore_prealloc(&b->file_alloc, sizeof(u32)*64*1024);
 	bore_prealloc(&b->proj_alloc, sizeof(bore_proj_t)*256);
-	bore_prealloc(&b->fsearch_alloc, 1*1024*1024);
+
+	for (i = 0; i < BORE_SEARCH_JOBS; ++i) {
+		bore_prealloc(&b->search[i].filedata, 1*1024*1024);
+	}
 
 	// Allocate something small, so that we can use offset 0 as NULL
 	bore_alloc(&b->data_alloc, 1);
@@ -342,6 +318,9 @@ static void bore_load_sln(const char* path)
 		goto fail;
 
 	sprintf(buf, "let g:bore_filelist_file=\'%s\'", b->filelist_tmp_file);
+    do_cmdline_cmd(buf);
+
+	sprintf(buf, "cd %s", bore_str(b, b->sln_dir));
     do_cmdline_cmd(buf);
 	
 	g_bore = b;
@@ -391,168 +370,55 @@ static int bore_canonicalize(const char* src, char* dst, DWORD* attr)
 	return OK;
 }
 
-static int bore_text_search(const char* text, int text_len, const char* what, int what_len, int* out, const int* out_end)
-{
-	// http://www-igm.univ-mlv.fr/~lecroq/string/index.html
-#define BTSOUTPUT(j) if (p != out_end) *p++ = j; else goto done;
-	const char* y = text;
-	int n = text_len;
-	const char* x = what;
-	int m = what_len;
-	int* p = out;
-	int j, k, ell;
-
-	/* Preprocessing */
-	if (x[0] == x[1]) {
-		k = 2;
-		ell = 1;
-	}
-	else {
-		k = 1;
-		ell = 2;
-	}
-
-	/* Searching */
-	j = 0;
-	while (j <= n - m) {
-		if (x[1] != y[j + 1])
-			j += k;
-		else {
-			if (memcmp(x + 2, y + j + 2, m - 2) == 0 && x[0] == y[j]) {
-				BTSOUTPUT(j);
-			}
-			j += ell;
-		}
-	}
-done:
-	return p - out;
-#undef BTSOUTPUT
-}
-
-typedef struct bore_match_t {
-	u32 file_index;
-	u32 row;
-	u32 column;
-	const char* linestart;
-} bore_match_t;
-
-static void bore_resolve_match_location(int file_index, const char* p, u32 filesize, 
-	bore_match_t* match, bore_match_t* match_end, int* offset, int offsetCount)
-{
-	const int* offset_end = offset + offsetCount;
-	const char* pbegin = p;
-	const char* linestart = p;
-	int line = 1;
-
-	while(offset < offset_end && match < match_end) {
-		const char* pend = pbegin + *offset;
-		while (p < pend) {
-			if (*p++ == '\n') {
-				++line;
-				linestart = p;
-			}
-		}
-		match->file_index = file_index;
-		match->row = line;
-		match->column = p - linestart;
-		match->linestart = linestart;
-		++match;
-		++offset;
-	}
-}
-
-static void bore_save_match_to_file(bore_t* b, FILE* cf, const char* fileend, 
-	const bore_match_t* match, int match_count)
-{
-	int i;
-	for (i = 0; i < match_count; ++i, ++match) {
-		const char* p = match->linestart;
-		while (p < fileend && *p != '\n' && *p != '\r')
-			++p;
-		fprintf(cf, "%s:%d:%d:", bore_str(b, ((u32*)(b->file_alloc.base))[match->file_index]), 
-			match->row, match->column);
-		fwrite(match->linestart, p - match->linestart, 1, cf);
-		fwrite("\n", 1, 1, cf);
-	}
-}
-
 static void bore_display_search_result(bore_t* b, const char* filename)
 {
 	exarg_T eap;
 	char* title[] = {"Bore Find", 0};
 
 	memset(&eap, 0, sizeof(eap));
-	//eap.cmdidx = CMD_copen;
-	eap.cmdidx = CMD_cwindow;
+	eap.cmdidx = CMD_cfile;
 	eap.arg = (char*)filename;
 	eap.cmdlinep = title;
 	ex_cfile(&eap);
+	
+	memset(&eap, 0, sizeof(eap));
+	eap.cmdidx = CMD_cwindow;
+	ex_copen(&eap);
 }
 
-static void bore_find(bore_t* b, char* what)
+static void bore_save_match_to_file(bore_t* b, FILE* cf, const bore_match_t* match, int match_count)
 {
-	enum { MaxMatch = 1000, MaxMatchPerFile = 100 };
+	const char *slndir = bore_str(b, b->sln_dir);
+	int slndirlen = strlen(slndir);
 	int i;
+	for (i = 0; i < match_count; ++i, ++match) {
+		const char* fn = bore_str(b, ((u32*)(b->file_alloc.base))[match->file_index]);
+		if (strncmp(fn, slndir, slndirlen) == 0)
+			fn += slndirlen;
+		fprintf(cf, "%s:%d:%d:%s\n", fn, match->row, match->column + 1, match->line);
+	}
+}
+
+static int bore_find(bore_t* b, char* what)
+{
+	enum { MaxMatch = 1000 };
 	u32* files = (u32*)b->file_alloc.base;
 	int found = 0;
 	char_u *tmp = vim_tempname('f');
 	FILE* cf = 0;
 	bore_match_t* match = 0;
+	int truncated = 0;
+
+	match = (bore_match_t*)alloc(MaxMatch * sizeof(bore_match_t));
+
+	found = bore_dofind(b, &truncated, match, MaxMatch, what);
 
 	cf = mch_fopen((char *)tmp, "wb");
 	if (cf == NULL) {
 	    EMSG2(_(e_notopen), tmp);
 		goto fail;
 	}
-
-	match = (bore_match_t*)alloc(MaxMatch * sizeof(bore_match_t));
-
-	for(i = 0; (i < b->file_count) && (found < MaxMatch); ++i) {
-		WCHAR fn[BORE_MAX_PATH];
-		HANDLE f;
-		DWORD filesize;
-		DWORD remaining;
-		char* p;
-		int match_offset[MaxMatchPerFile];
-		int match_in_file;
-		int result = MultiByteToWideChar(CP_UTF8, 0, bore_str(b, files[i]), -1, fn, BORE_MAX_PATH);
-		if (result == 0)
-			continue;
-		f = CreateFileW(fn, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, 0);
-		if (f == INVALID_HANDLE_VALUE)
-			goto skip;
-		filesize = GetFileSize(f, 0);
-		if (filesize == INVALID_FILE_SIZE)
-			goto skip;
-		b->fsearch_alloc.cursor = b->fsearch_alloc.base;
-		bore_alloc(&b->fsearch_alloc, filesize);
-		p = b->fsearch_alloc.base;
-		remaining = filesize;
-		while(remaining) {
-			DWORD readbytes;
-			if(!ReadFile(f, p + filesize - remaining, remaining, &readbytes, 0))
-				goto skip;
-			remaining -= readbytes;
-		}
-		
-		CloseHandle(f);
-		
-		match_in_file = bore_text_search(p, filesize, what, strlen(what), &match_offset[0], 
-			&match_offset[MaxMatchPerFile]);
-
-		if ((MaxMatch - found) < match_in_file)
-			match_in_file = MaxMatch - found;
-
-		bore_resolve_match_location(i, p, filesize, &match[found], &match[MaxMatch], match_offset,
-			match_in_file);
-
-		bore_save_match_to_file(b, cf, p + filesize, &match[found], match_in_file);
-
-		found += match_in_file;
-		continue;
-skip:
-		CloseHandle(f);
-	}
+	bore_save_match_to_file(b, cf, match, found);
 
 	fclose(cf);
 
@@ -562,6 +428,7 @@ fail:
 	vim_free(tmp);
 	vim_free(match);
 	if (cf) fclose(cf);
+	return truncated ? -found : found;
 }
 
 // Display filename in the borebuf.
@@ -736,9 +603,9 @@ void ex_borefind __ARGS((exarg_T *eap))
 		DWORD start = GetTickCount();
 		DWORD elapsed;
 		char mess[100];
-		bore_find(g_bore, (char*)eap->arg);
+		int found = bore_find(g_bore, (char*)eap->arg);
 		elapsed = GetTickCount() - start;
-		sprintf(mess, "Elapsed time: %u ms", elapsed);
+		sprintf(mess, "Matching lines: %d%s Elapsed time: %u ms", found > 0 ? found : -found, found < 0 ? " (truncated)" : "", elapsed);
 		MSG(_(mess));
 	}
 }
