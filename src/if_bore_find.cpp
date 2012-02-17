@@ -4,8 +4,6 @@
 #include "if_bore.h"
 #include <windows.h>
 #include <winnt.h>
-#include <ppl.h>
-#include <functional>
 
 // Circular buffer
 template <typename T>
