@@ -7,6 +7,7 @@ extern "C" {
 #define BORE_MAX_SMALL_PATH 256
 #define BORE_MAX_PATH 1024
 #define BORE_SEARCH_JOBS 8
+#define BORE_SEARCH_RESULTS 8
 #define BORE_CACHELINE 64 
 #define BORE_MAXMATCHPERFILE 100
 
@@ -38,8 +39,13 @@ typedef struct bore_ini_t {
 
 typedef struct __declspec(align(BORE_CACHELINE)) bore_search_job_t {
 	bore_alloc_t filedata;
-	bore_match_t result[BORE_MAXMATCHPERFILE];  
+	int fileindex;
 } bore_search_job_t;
+
+typedef struct __declspec(align(BORE_CACHELINE)) bore_search_result_t { 
+	int hits;
+	bore_match_t result[BORE_MAXMATCHPERFILE];  
+} bore_search_result_t;
 
 typedef struct bore_t {
 	u32 sln_path; // abs path of solution
@@ -59,6 +65,7 @@ typedef struct bore_t {
 
 	// context used for searching
 	bore_search_job_t search[BORE_SEARCH_JOBS];
+	bore_search_result_t search_result[BORE_SEARCH_RESULTS];
 
 	bore_ini_t ini;
 } bore_t;
