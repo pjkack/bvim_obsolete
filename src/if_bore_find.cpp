@@ -156,43 +156,93 @@ private:
 	PVOID funcContext_;
 };
 
-static int bore_text_search(const char* text, int text_len, const char* what, int what_len, int* out, const int* out_end)
-{
-	// http://www-igm.univ-mlv.fr/~lecroq/string/index.html
 #define BTSOUTPUT(j) if (p != out_end) *p++ = j; else goto done;
-	const char* y = text;
-	int n = text_len;
-	const char* x = what;
-	int m = what_len;
-	int* p = out;
-	int j, k, ell;
+struct ExactStringSearch
+{
+	virtual int search(const char* text, int text_len, const char* what, int what_len, int* out, const int* out_end) const = 0;
+};
 
-	/* Preprocessing */
-	if (x[0] == x[1]) {
-		k = 2;
-		ell = 1;
-	}
-	else {
-		k = 1;
-		ell = 2;
+struct QuickSearch : public ExactStringSearch
+{
+	QuickSearch(const char *what, int what_len)
+	{
+		/* Preprocessing */
+		preQsBc((const unsigned char*)what, what_len, m_qsBc);
 	}
 
-	/* Searching */
-	j = 0;
-	while (j <= n - m) {
-		if (x[1] != y[j + 1])
-			j += k;
-		else {
-			if (memcmp(x + 2, y + j + 2, m - 2) == 0 && x[0] == y[j]) {
+	virtual int search (const char* text, int text_len, const char* what, int what_len, int* out, const int* out_end) const
+	{
+		int j;
+		const unsigned char* x = (const unsigned char*)what;
+		int m = what_len;
+		const unsigned char* y = (const unsigned char*)text;
+		int n = text_len;
+		int* p = out;
+
+		j = 0;
+		while (j <= n - m) {
+			if (memcmp(x, y + j, m) == 0)
 				BTSOUTPUT(j);
-			}
-			j += ell;
+			j += m_qsBc[y[j + m]];               /* shift */
 		}
+
+	done:
+		return p - out;
 	}
-done:
-	return p - out;
+
+private:
+	enum { ASIZE = 256 };
+	int m_qsBc[ASIZE];
+	void preQsBc(const unsigned char *x, int m, int qsBc[]) {
+		int i;
+
+		for (i = 0; i < ASIZE; ++i)
+			qsBc[i] = m + 1;
+		for (i = 0; i < m; ++i)
+			qsBc[x[i]] = m - i;
+	}
+};
+
+struct OldSearch : public ExactStringSearch
+{
+	virtual int search(const char* text, int text_len, const char* what, int what_len, int* out, const int* out_end) const
+	{
+		// http://www-igm.univ-mlv.fr/~lecroq/string/index.html
+		const char* y = text;
+		int n = text_len;
+		const char* x = what;
+		int m = what_len;
+		int* p = out;
+		int j, k, ell;
+
+		/* Preprocessing */
+		if (x[0] == x[1]) {
+			k = 2;
+			ell = 1;
+		}
+		else {
+			k = 1;
+			ell = 2;
+		}
+
+		/* Searching */
+		j = 0;
+		while (j <= n - m) {
+			if (x[1] != y[j + 1])
+				j += k;
+			else {
+				if (memcmp(x + 2, y + j + 2, m - 2) == 0 && x[0] == y[j]) {
+					BTSOUTPUT(j);
+				}
+				j += ell;
+			}
+		}
+	done:
+		return p - out;
+	}
+};
+
 #undef BTSOUTPUT
-}
 
 static void bore_resolve_match_location(int file_index, const char* p, u32 filesize, 
 	bore_match_t* match, bore_match_t* match_end, int* offset, int offsetCount)
@@ -226,8 +276,6 @@ static void bore_resolve_match_location(int file_index, const char* p, u32 files
 		++offset;
 	}
 }
-
-#if 1
 
 struct FileHandle
 {
@@ -318,6 +366,7 @@ struct SearchFileContext
 	bool* searchResultAlloc;
 	const char* what;
 	int what_len;
+	const ExactStringSearch* search;
 };
 
 WorkStatus searchFileJob(const int* searchIndex, int* searchResultIndex, PVOID ctx)
@@ -327,7 +376,7 @@ WorkStatus searchFileJob(const int* searchIndex, int* searchResultIndex, PVOID c
 
 	// Search for the text
 	int match_offset[BORE_MAXMATCHPERFILE];
-	int match_in_file = bore_text_search((char*)sj->filedata.base, sj->filedata.cursor - sj->filedata.base,
+	int match_in_file = c->search->search((char*)sj->filedata.base, sj->filedata.cursor - sj->filedata.base,
 			c->what, c->what_len, &match_offset[0], &match_offset[BORE_MAXMATCHPERFILE]);
 	
 	if (0 == match_in_file)
@@ -424,6 +473,7 @@ int bore_dofind(bore_t* b, int* truncated_, bore_match_t* match, int match_size,
 	static int wg3Capacity = 1; // Search threads
 	static int wg4Capacity = 1; // Write result thread. Must be 1
 
+	// borefind 	// AI2System
 	// 1, 1, 1, 1 : 1400ms
 	// 1, 1, 2, 1 : 1400ms
 	// 2, 1, 1, 1 : 800ms
@@ -457,6 +507,9 @@ int bore_dofind(bore_t* b, int* truncated_, bore_match_t* match, int match_size,
 	sfc.searchResultLock = &searchResultLock;
 	sfc.what = what;
 	sfc.what_len = strlen(what);
+	//OldSearch search; // 450ms
+	QuickSearch search(sfc.what, sfc.what_len); // 437ms
+	sfc.search = &search;
 	WorkGroup<int, int> wg3(wg3Capacity, &q2, &q3, &searchFileJob, &sfc);
 
 	WriteResultContext wrc;
