@@ -22,6 +22,8 @@
 
 
 static int bore_canonicalize (const char* src, char* dst, DWORD* attr);
+static u32 bore_string_hash(const char* s);
+static u32 bore_string_hash_n(const char* s, int n);
 
 void bore_prealloc(bore_alloc_t* p, size_t size)
 {
@@ -242,6 +244,72 @@ static int bore_sort_and_cleanup_files(bore_t* b)
 	return OK;
 }
 
+static int bore_sort_toggle_entry(const void* vx, const void* vy)
+{
+	const bore_toggle_entry_t* x = (const bore_toggle_entry_t*)vx;
+	const bore_toggle_entry_t* y = (const bore_toggle_entry_t*)vy;
+	u32 basename_diff = x->basename_hash - y->basename_hash;
+	if (0 == basename_diff)
+		return x->extension_index - y->extension_index;
+	else
+		return basename_diff;
+}
+
+static int bore_build_toggle_index(bore_t* b)
+{
+	u32* files = (u32*)b->file_alloc.base;
+	u32 i;
+	u32 seq[] = {
+		bore_string_hash("cpp"),
+		bore_string_hash("cxx"),
+		bore_string_hash("c"),
+		bore_string_hash("inl"),
+		bore_string_hash("hpp"),
+		bore_string_hash("hxx"),
+		bore_string_hash("h"),
+		bore_string_hash("asm"),
+		bore_string_hash("s"),
+		bore_string_hash("ddf"), 
+	};
+	bore_prealloc(&b->toggle_index_alloc, b->file_count * sizeof(bore_toggle_entry_t));
+	b->toggle_entry_count = 0;
+	for (i = 0; i < (u32)b->file_count; ++i) {
+		const char* path = bore_str(b, files[i]);
+		u32 path_len = (u32)strlen(path);
+		const char* ext = strrchr(path, '.');
+		const char* basename = strrchr(path, '\\');
+		bore_toggle_entry_t* e;
+		int j;
+		u32 ext_hash;
+		int ext_index = -1;
+		
+		ext = ext ? ext + 1 : path + path_len;
+		basename = basename ? basename + 1 : path;
+
+		ext_hash = bore_string_hash(ext);
+
+		for (j = 0; j < sizeof(seq)/sizeof(seq[0]); ++j)
+			if (seq[j] == ext_hash) {
+				ext_index = j;
+				break;
+			}
+	
+		if (ext_index >= 0) {
+			e = (bore_toggle_entry_t*)bore_alloc(&b->toggle_index_alloc, 
+					sizeof(bore_toggle_entry_t));
+			e->fileindex = i;
+			e->extension_hash = ext_hash;
+			e->extension_index = ext_index;
+			e->basename_hash = bore_string_hash_n(basename, (int)(ext - basename));
+			b->toggle_entry_count++;
+		}
+	}
+	qsort(b->toggle_index_alloc.base, b->toggle_entry_count, sizeof(bore_toggle_entry_t), 
+			bore_sort_toggle_entry);
+	
+	return OK;
+}
+
 static int bore_write_filelist_to_tempfile(bore_t* b)
 {
 	FILE* f;
@@ -314,6 +382,9 @@ static void bore_load_sln(const char* path)
 	if (FAIL == bore_sort_and_cleanup_files(b))
 		goto fail;
 
+	if (FAIL == bore_build_toggle_index(b))
+		goto fail;
+
 	if (FAIL == bore_write_filelist_to_tempfile(b))
 		goto fail;
 
@@ -370,6 +441,22 @@ static int bore_canonicalize(const char* src, char* dst, DWORD* attr)
 	return OK;
 }
 
+static u32 bore_string_hash(const char *str)
+{
+	return bore_string_hash_n(str, -1);
+}
+
+static u32 bore_string_hash_n(const char *str, int n)
+{
+   u32 h;
+   u8 *p = (u8*)str;
+   u8 *pend = p + n;
+
+   h = 0;
+   for (; p != pend && *p != '\0'; p++)
+      h = 33 * h + tolower(*p);
+   return h + (h >> 5);
+}
 static void bore_display_search_result(bore_t* b, const char* filename)
 {
 	exarg_T eap;
@@ -617,6 +704,105 @@ void ex_boreopen __ARGS((exarg_T *eap))
 	else {
 		const char* mappings[] = {"<CR> :ZZBoreopenselection<CR>", 0};
 		bore_show_borebuf(g_bore->filelist_tmp_file, g_bore->ini.borebuf_height, mappings);
+	}
+}
+
+int bore_toggle_entry_score(const char* buffer_name, const char* candidate)
+{
+	int score = 0;
+	while(*buffer_name && *candidate && (tolower(*buffer_name) == tolower(*candidate))) {
+		++buffer_name;
+		++candidate;
+		++score;
+	}
+	return score;
+}
+
+void ex_boretoggle __ARGS((exarg_T *eap))
+{
+	if (!g_bore)
+		EMSG(_("Load a solution first with boresln"));
+	else {
+		char path[BORE_MAX_PATH];
+		const char* ext;
+		const char* basename;
+		int path_len;
+		u32 basename_hash;
+		u32 ext_hash;
+		const bore_toggle_entry_t* e_begin = (const bore_toggle_entry_t*)g_bore->toggle_index_alloc.base;
+		const bore_toggle_entry_t* e = e_begin;
+		const bore_toggle_entry_t* e_end = e + g_bore->toggle_entry_count;
+		const bore_toggle_entry_t* e_buf;
+		const bore_toggle_entry_t* e_best;
+		int e_best_score;
+
+		if (FAIL == bore_canonicalize(curbuf->b_fname, path, 0))
+			return;
+
+		path_len = strlen(path);
+		
+		ext = strrchr(path, '.');
+		ext = ext ? ext + 1 : path + path_len;
+		ext_hash = bore_string_hash(ext);
+		
+		basename = strrchr(path, '\\');
+		basename = basename ? basename + 1 : path;
+		basename_hash = bore_string_hash_n(basename, ext - basename);
+
+		// find first entry with identical basename
+		e = e_begin;
+		for (; e != e_end; ++e) {
+			if (e->basename_hash == basename_hash)
+				break;
+		}
+
+		if (e == e_end)
+			return;
+
+		e_begin = e; // first match is now the new beginning
+
+		// Find the entry of this buffer's file
+		for (; e != e_end && e->basename_hash == basename_hash; ++e)
+			if (0 == stricmp(bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e->fileindex]) , path))
+				break;
+	
+		if (e == e_end || e->basename_hash != basename_hash)
+			return;
+
+		// Find what ext to toggle to
+		e_buf = e;
+		for(;;) {
+			++e;
+			if (e == e_end || e->basename_hash != basename_hash)
+				e = e_begin;
+			if (e == e_buf)
+				return; // no match
+			if (e->extension_index != e_buf->extension_index) {
+				break;
+			}
+		}
+
+		// Find the best matching ext
+		e_best = e;
+		e_best_score = bore_toggle_entry_score(path, bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e->fileindex]));
+		++e;
+		for(; e != e_end && e_best->extension_index == e->extension_index; ++e)
+		{
+			int score = bore_toggle_entry_score(path, bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e->fileindex]));
+			if (score > e_best_score) {
+				e_best_score = score;
+				e_best = e;
+			}
+		}
+
+		{
+			exarg_T ea;
+			memset(&ea, 0, sizeof(ea));
+			ea.arg = vim_strsave(bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e_best->fileindex]));
+			ea.cmdidx = CMD_edit;
+			do_exedit(&ea, NULL);
+			vim_free(ea.arg);
+		}
 	}
 }
 

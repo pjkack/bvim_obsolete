@@ -47,6 +47,13 @@ typedef struct __declspec(align(BORE_CACHELINE)) bore_search_result_t {
 	bore_match_t result[BORE_MAXMATCHPERFILE];  
 } bore_search_result_t;
 
+typedef struct bore_toggle_entry_t {
+	u32 basename_hash;
+	u32 extension_hash;
+	int extension_index;
+	u32 fileindex;
+} bore_toggle_entry_t;
+
 typedef struct bore_t {
 	u32 sln_path; // abs path of solution
 	u32 sln_dir;  // abs dir of solution
@@ -60,6 +67,10 @@ typedef struct bore_t {
 	// array of files in the solution
 	int file_count;
 	bore_alloc_t file_alloc;
+
+	// array of bore_toggle_entry_t;
+	int toggle_entry_count;
+	bore_alloc_t toggle_index_alloc;
 
 	bore_alloc_t data_alloc; // bulk data (filenames, strings, etc)
 
