@@ -112,9 +112,27 @@ static void bore_append_vcxproj_files(bore_t* b, node_t** result, int result_cou
 
 	for(i = 0, file_index = 0; i < result_count; ++i) {
 		char buf[BORE_MAX_PATH];
+		const char* fn;
 		DWORD attr;
+		int len;
+		const char* ext;
+		int skipFile = 0;
+
 		roxml_get_content(result[i], filename_part, BORE_MAX_PATH - path_part_len, 0);
-		if (FAIL != bore_canonicalize(filename_buf, buf, &attr)) {
+		len = strlen(filename_part);
+		/* roxml sometimes returns paths with trailing " */
+		while(len > 0 && filename_part[len - 1] == '\"') {
+			--len;
+			filename_part[len] = 0;
+		}
+		fn = (strlen(filename_part) >=2 && filename_part[1] == ':') ? filename_part : filename_buf;
+
+		ext = strrchr(filename_part, '.');
+		if (ext) {
+			if (0 == stricmp(ext, ".build") || 0 == stricmp(ext, ".vcxproj"))
+				skipFile = 1;
+		}
+		if (!skipFile && FAIL != bore_canonicalize(fn, buf, &attr)) {
 			if (!(FILE_ATTRIBUTE_DIRECTORY & attr))
 				files[file_index++] = bore_strndup(b, buf, strlen(buf));
 		}
@@ -146,6 +164,7 @@ static void bore_load_vcxproj_filters(bore_t* b, const char* path)
 	roxml_release(result);
 
 	roxml_close(root);
+
 }
 
 static int bore_extract_projects_from_sln(bore_t* b, const char* sln_path)
@@ -433,8 +452,11 @@ static int bore_canonicalize(const char* src, char* dst, DWORD* attr)
 	fnresult = GetFullPathNameW(wbuf, BORE_MAX_PATH, wbuf2, 0);
 	if (!fnresult)
 		return FAIL;
-	if (attr)
+	if (attr) {
 		*attr = GetFileAttributesW(wbuf);
+		if (*attr == INVALID_FILE_ATTRIBUTES)
+			return FAIL;
+	}
 	result = WideCharToMultiByte(CP_UTF8, 0, wbuf2, -1, dst, BORE_MAX_PATH, 0, 0);
 	if (!result)
 		return FAIL;
