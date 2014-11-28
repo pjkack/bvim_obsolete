@@ -615,7 +615,14 @@ static int bore_find(bore_t* b, char* what)
 
 	match = (bore_match_t*)alloc(MaxMatch * sizeof(bore_match_t));
 
-	found = bore_dofind(b, &truncated, match, MaxMatch, what);
+	int threadCount = 4;
+	const char_u* threadCountStr = get_var_value((char_u *)"g:bore_search_thread_count");
+	if (threadCountStr)
+	{
+		threadCount = atoi(threadCountStr);
+	}
+
+	found = bore_dofind(b, threadCount, &truncated, match, MaxMatch, what);
 
 	cf = mch_fopen((char *)tmp, "wb");
 	if (cf == NULL) {

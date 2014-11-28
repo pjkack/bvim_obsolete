@@ -5,154 +5,26 @@
 #include <windows.h>
 #include <winnt.h>
 
-// Circular buffer
-template <typename T>
-class SyncQueue
-{
-public:
-	explicit SyncQueue(int capacity)
-	{
-		data_ = new T[capacity];
-		capacity_ = capacity;
-		queueBegin_ = 0;
-		queueSize_ = 0;
-		cancelSignal_ = 0;
-		InitializeConditionVariable(&notEmpty_);
-		InitializeConditionVariable(&notFull_);
-		InitializeCriticalSection(&lock_);
-	}
+//#define BORE_CVPROFILE
 
-	~SyncQueue()
-	{
-		delete [] data_;
-		DeleteCriticalSection(&lock_);
-	}
+#ifdef BORE_CVPROFILE
+#pragma comment(lib, "Advapi32.lib")
+#include <cvmarkers.h>
+//#include <C:\vs2013\Common7\IDE\Extensions\iq325bsi.llt\SDK\Native\Inc\cvmarkers.h>
+PCV_PROVIDER g_provider;
+PCV_MARKERSERIES g_series1;
+int g_cvInitialized;
 
-	bool get(T& item)
-	{
-		EnterCriticalSection(&lock_);
-		while(!queueSize_ && !cancelSignal_) 
-			SleepConditionVariableCS(&notEmpty_, &lock_, INFINITE);
-		if (cancelSignal_ && !queueSize_) {
-			LeaveCriticalSection(&lock_);
-			return false;
-		}	
-		item = data_[queueBegin_];
-		--queueSize_;
-		queueBegin_ = (queueBegin_ + 1) % capacity_;
-		LeaveCriticalSection(&lock_);
-		WakeConditionVariable(&notFull_);
-		return true;
-	}
-
-	bool put(const T& item)
-	{
-		EnterCriticalSection(&lock_);
-		while (queueSize_ == capacity_ && !cancelSignal_)
-			SleepConditionVariableCS(&notFull_, &lock_, INFINITE);
-		if (cancelSignal_) {
-			LeaveCriticalSection(&lock_);
-			return false;
-		}	
-		data_[(queueBegin_ + queueSize_) % capacity_] = item;
-		++queueSize_;
-		LeaveCriticalSection(&lock_);
-		WakeConditionVariable(&notEmpty_);
-		return true;
-	}
-
-	void donePutting()
-	{
-		EnterCriticalSection(&lock_);
-		cancelSignal_ = 1;
-		LeaveCriticalSection(&lock_);
-		WakeAllConditionVariable(&notEmpty_);
-		WakeAllConditionVariable(&notFull_);
-	}
-
-private:
-	CONDITION_VARIABLE notEmpty_;
-	CONDITION_VARIABLE notFull_;
-	CRITICAL_SECTION lock_;
-	LONG cancelSignal_;
-	int queueBegin_;
-	int queueSize_;
-	int capacity_;
-	T* data_;
-};
-
-enum WorkStatus 
-{
-	WSSuccess,
-	WSSkip,
-	WSNoMoreWork,
-};
-
-template <typename Tin, typename Tout>
-class WorkGroup
-{
-public:
-	typedef WorkStatus (*ProcessFunc)(const Tin* pin, Tout* pout, PVOID context);
-
-	WorkGroup(int count, SyncQueue<Tin>* qin, SyncQueue<Tout>* qout, ProcessFunc f, PVOID fcontext)
-	{
-		qin_ = qin;
-		qout_ = qout;
-		func_ = f;
-		funcContext_ = fcontext;
-		count_ = count;
-		thread_ = new HANDLE[count];
-		DWORD tid;
-		for (int i = 0; i < count; ++i)
-			thread_[i] = CreateThread(0, 0, threadProc, this, 0, &tid);
-	}
-	
-	~WorkGroup()
-	{
-		for (int i = 0; i < count_; ++i)
-			CloseHandle(thread_[i]);
-		delete [] thread_;
-	}
-
-	void join()
-	{
-		WaitForMultipleObjects(count_, thread_, TRUE, INFINITE);
-	}
-
-private:
-	static DWORD WINAPI threadProc(PVOID p)
-	{
-		WorkGroup<Tin, Tout>* wg = (WorkGroup<Tin, Tout>*)p;
-		for(;;)
-		{
-			Tin inItem;
-			if (wg->qin_)
-				if (!wg->qin_->get(inItem)) {
-					if (wg->qout_)
-						wg->qout_->donePutting();
-					return 0;
-				}
-			Tout outItem;
-			WorkStatus ws = (*wg->func_)(&inItem, &outItem, wg->funcContext_);
-			if (ws == WSNoMoreWork) {
-				if (wg->qout_)
-					wg->qout_->donePutting();
-				return 0;
-			}
-			if (wg->qout_ && ws == WSSuccess)
-				if (!wg->qout_->put(outItem))
-					return 0;
-		}
-	}
-
-private:
-	int count_;
-	HANDLE* thread_;
-	SyncQueue<Tin>* qin_;
-	SyncQueue<Tout>* qout_;
-	ProcessFunc func_;
-	PVOID funcContext_;
-};
+#define BORE_CVBEGINSPAN(str) CvEnterSpanA(g_series1, &span, str)
+#define BORE_CVENDSPAN() do { CvLeaveSpan(span); span = 0; } while(0)
+#define BORE_CVINITSPAN PCV_SPAN span = 0
+#define BORE_CVDEINITSPAN do { if (span) CvLeaveSpan(span); } while(0)
+#else
+#define BORE_CVBEGINSPAN(str)
+#define BORE_CVENDSPAN()
+#define BORE_CVINITSPAN
+#define BORE_CVDEINITSPAN
+#endif
 
 #define BTSOUTPUT(j) if (p != out_end) *p++ = j; else goto done;
 struct ExactStringSearch
@@ -275,261 +147,205 @@ static void bore_resolve_match_location(int file_index, const char* p, u32 files
 	}
 }
 
-struct FileHandle
-{
-	HANDLE h;
-	int fileindex;
-};
-
-struct OpenFileContext
+struct SearchContext 
 {
 	bore_t* b;
-	LONG* file_index;
-};
-
-WorkStatus openFileJob(const short*, FileHandle* hout, PVOID p)
-{
-	OpenFileContext* c = (OpenFileContext*)p;
-	WCHAR fn[BORE_MAX_PATH];
-	u32* const files = (u32*)c->b->file_alloc.base;
-	LONG n = InterlockedExchangeAdd(c->file_index, 1);
-	if (n >= c->b->file_count)
-		return WSNoMoreWork;
-	int result = MultiByteToWideChar(CP_UTF8, 0, bore_str(c->b, files[n]), -1, fn, BORE_MAX_PATH);
-	if (result == 0)
-		return WSSkip;
-	hout->fileindex = n;
-	hout->h = CreateFileW(fn, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, 0);
-	if (hout->h == INVALID_HANDLE_VALUE)
-		return WSSkip;
-	return WSSuccess;
-}
-
-struct ReadFileContext
-{
-	bore_t* b;
-	LPCRITICAL_SECTION searchJobLock;
-	bool* searchJobAlloc;
-};
-
-WorkStatus readFileJob(const FileHandle* pin, int* searchIndex, PVOID ctx)
-{
-	ReadFileContext* c = (ReadFileContext*)ctx;
-	HANDLE f = pin->h;
-	DWORD filesize = GetFileSize(f, 0);
-	if (filesize == INVALID_FILE_SIZE)
-		goto skip;
-
-	int index = -1;
-	do
-	{
-		EnterCriticalSection(c->searchJobLock);
-		for (int i = 0; i < BORE_SEARCH_JOBS; ++i)
-			if (c->searchJobAlloc[i] == false) {
-				c->searchJobAlloc[i] = true;
-				index = i;
-				break;
-			}
-		LeaveCriticalSection(c->searchJobLock);
-	} while(index == -1);
-
-	bore_search_job_t* sj = &c->b->search[index];
-	sj->fileindex = pin->fileindex;
-	sj->filedata.cursor = sj->filedata.base;
-	bore_alloc(&sj->filedata, filesize);
-	char* p = (char*)sj->filedata.base;
-	DWORD remaining = filesize;
-	while(remaining) {
-		DWORD readbytes;
-		if(!ReadFile(f, p + filesize - remaining, remaining, &readbytes, 0))
-			goto skip;
-		remaining -= readbytes;
-	}
-
-	*searchIndex = index;
-	
-	CloseHandle(f);
-	return WSSuccess;
-skip:
-	CloseHandle(f);
-	return WSSkip;
-}
-
-struct SearchFileContext
-{
-	bore_t* b;
-	LPCRITICAL_SECTION searchJobLock;
-	bool* searchJobAlloc;
-	LPCRITICAL_SECTION searchResultLock;
-	bool* searchResultAlloc;
+	LONG* remainingFileCount;
+	bore_alloc_t filedata;
+	const ExactStringSearch* search;
 	const char* what;
 	int what_len;
-	const ExactStringSearch* search;
-};
-
-WorkStatus searchFileJob(const int* searchIndex, int* searchResultIndex, PVOID ctx)
-{
-	SearchFileContext* c = (SearchFileContext*)ctx;
-	bore_search_job_t* sj = &c->b->search[*searchIndex];
-
-	// Search for the text
-	int match_offset[BORE_MAXMATCHPERFILE];
-	int match_in_file = c->search->search((char*)sj->filedata.base, sj->filedata.cursor - sj->filedata.base,
-			c->what, c->what_len, &match_offset[0], &match_offset[BORE_MAXMATCHPERFILE]);
-	
-	if (0 == match_in_file)
-	{
-		// Done with the file buffer
-		EnterCriticalSection(c->searchJobLock);
-		c->searchJobAlloc[*searchIndex] = false;
-		LeaveCriticalSection(c->searchJobLock);
-		return WSSkip;
-	}
-	
-	// Grab a slot for storing the result
-	int index = -1;
-	do
-	{
-		EnterCriticalSection(c->searchResultLock);
-		for (int i = 0; i < BORE_SEARCH_RESULTS; ++i)
-			if (c->searchResultAlloc[i] == false) {
-				c->searchResultAlloc[i] = true;
-				index = i;
-				break;
-			}
-		LeaveCriticalSection(c->searchResultLock);
-	} while(index == -1);
-
-	// Fill the result with the line's text, etc.
-	bore_resolve_match_location(sj->fileindex, (char*)sj->filedata.base, sj->filedata.cursor - sj->filedata.base, 
-		&c->b->search_result[index].result[0], &c->b->search_result[index].result[BORE_MAXMATCHPERFILE], 
-		match_offset, match_in_file);
-	c->b->search_result[index].hits = match_in_file;
-
-	// Done with the file buffer
-	EnterCriticalSection(c->searchJobLock);
-	c->searchJobAlloc[*searchIndex] = false;
-	LeaveCriticalSection(c->searchJobLock);
-
-	// Pass the search result slot on to the next job 
-	*searchResultIndex = index;
-	return WSSuccess;
-}
-
-struct WriteResultContext
-{
-	bore_t* b;
-	LPCRITICAL_SECTION searchResultLock;
-	bool* searchResultAlloc;
-	int truncated;
 	bore_match_t* match;
-	int match_capacity;
-	int match_count;
+	LONG matchSize;
+	LONG* matchCount;
+	int wasTruncated;
 };
 
-WorkStatus writeResultJob(const int* resultIndex, short*, PVOID ctx)
+static void SearchOneFile(struct SearchContext* searchContext, const char* filename, int fileIndex)
 {
-	WriteResultContext* c = (WriteResultContext*)ctx;
-	bore_search_result_t* sr = &c->b->search_result[*resultIndex];
+	HANDLE fileHandle = INVALID_HANDLE_VALUE;
+	bore_search_result_t search_result = {0};
+	BORE_CVINITSPAN;
 
-	int n = sr->hits + c->match_count <= c->match_capacity ? sr->hits : c->match_capacity - c->match_count;
-	memcpy(&c->match[c->match_count], sr->result, sizeof(bore_match_t) * n);
-	c->match_count += n;
-	c->truncated = sr->hits == c->match_capacity || sr->hits == BORE_MAXMATCHPERFILE;
+	{
+		BORE_CVBEGINSPAN("opn");
+		WCHAR fn[BORE_MAX_PATH];
+		int result = MultiByteToWideChar(CP_UTF8, 0, filename, -1, fn, BORE_MAX_PATH);
+		if (result == 0)
+		{
+			goto skip;
+		}
 
-	// Done with the result
-	EnterCriticalSection(c->searchResultLock);
-	c->searchResultAlloc[*resultIndex] = false;
-	LeaveCriticalSection(c->searchResultLock);
+		fileHandle = CreateFileW(fn, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, 0);
+		if (fileHandle == INVALID_HANDLE_VALUE)
+		{
+			goto skip;
+		}
+		BORE_CVENDSPAN();
+	}
 
-	return WSSuccess;
+	{
+		BORE_CVBEGINSPAN("rd");
+
+		DWORD filesize = GetFileSize(fileHandle, 0);
+		if (filesize == INVALID_FILE_SIZE)
+			goto skip;
+
+		searchContext->filedata.cursor = searchContext->filedata.base;
+		bore_alloc(&searchContext->filedata, filesize);
+
+		char* p = (char*)searchContext->filedata.base;
+		DWORD remaining = filesize;
+		while(remaining) {
+			DWORD readbytes;
+			if(!ReadFile(fileHandle, p + filesize - remaining, remaining, &readbytes, 0))
+				goto skip;
+			remaining -= readbytes;
+		}
+
+		BORE_CVENDSPAN();
+	}
+
+
+	{
+		BORE_CVBEGINSPAN("srch");
+
+		// Search for the text
+		int match_offset[BORE_MAXMATCHPERFILE];
+		int match_in_file = searchContext->search->search(
+			(char*)searchContext->filedata.base, 
+			searchContext->filedata.cursor - searchContext->filedata.base,
+			searchContext->what, 
+			searchContext->what_len, 
+			&match_offset[0], 
+			&match_offset[BORE_MAXMATCHPERFILE]);
+
+		// Fill the result with the line's text, etc.
+		bore_resolve_match_location(
+			fileIndex, 
+			(char*)searchContext->filedata.base, 
+			searchContext->filedata.cursor - searchContext->filedata.base, 
+			&search_result.result[0], 
+			&search_result.result[BORE_MAXMATCHPERFILE], 
+			match_offset, 
+			match_in_file);
+
+		if (match_in_file == BORE_MAXMATCHPERFILE)
+			searchContext->wasTruncated = 1;
+
+		search_result.hits = match_in_file;
+
+		BORE_CVENDSPAN();
+	}
+
+	{
+		BORE_CVBEGINSPAN("wr");
+
+		LONG startIndex = InterlockedExchangeAdd(searchContext->matchCount, search_result.hits);
+
+		int n = search_result.hits;
+		if (startIndex + n >= searchContext->matchSize)
+		{
+			searchContext->wasTruncated = 2; // Out of space. Signal quit.
+			n = searchContext->matchSize - startIndex;
+		}
+			
+		memcpy(&searchContext->match[startIndex], search_result.result, sizeof(bore_match_t) * n);
+	
+		BORE_CVENDSPAN();
+	}
+
+skip:
+	if (fileHandle != INVALID_HANDLE_VALUE) 
+	{
+		CloseHandle(fileHandle);
+	}
+	BORE_CVDEINITSPAN;
 }
 
-int bore_dofind(bore_t* b, int* truncated_, bore_match_t* match, int match_size, const char* what)
+static DWORD WINAPI SearchWorker(struct SearchContext* searchContext)
 {
+	for (;;)
+	{
+		LONG fileIndex = InterlockedDecrement(searchContext->remainingFileCount);
+		if (fileIndex < 0)
+			break;
+
+		u32* const files = (u32*)searchContext->b->file_alloc.base;
+		SearchOneFile(searchContext, bore_str(searchContext->b, files[fileIndex]), fileIndex);
+
+		if (searchContext->wasTruncated > 1)
+			break;
+
+	}
+	return 0;
+}
+
+int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match, int match_size, const char* what)
+{
+#ifdef BORE_CVPROFILE
+	if (!g_cvInitialized)
+	{
+		GUID guid = { 0x551695cb, 0x80ac, 0x4c14, 0x98, 0x58, 0xec, 0xb9, 0x43, 0x48, 0xd4, 0x3e };
+		CvInitProvider(&guid, &g_provider);
+		CvCreateMarkerSeriesA(g_provider, "bore_find", &g_series1);
+		g_cvInitialized = 1;
+	}
+#endif	
+
 	u32* const files = (u32*)b->file_alloc.base;
 	const int what_len = strlen(what);
-	const int file_count = b->file_count;
-	__declspec(align(BORE_CACHELINE)) LONG match_index = 0;
-	__declspec(align(BORE_CACHELINE)) LONG file_index = 0;
-	__declspec(align(BORE_CACHELINE)) bool searchJobAlloc[BORE_SEARCH_JOBS];
-	__declspec(align(BORE_CACHELINE)) CRITICAL_SECTION searchJobLock;
-	__declspec(align(BORE_CACHELINE)) bool searchResultAlloc[BORE_SEARCH_RESULTS];
-	__declspec(align(BORE_CACHELINE)) CRITICAL_SECTION searchResultLock;
+	LONG file_count = b->file_count;
+	*truncated_ = 0;	
+	
+	QuickSearch search(what, what_len);
 
-	memset(searchJobAlloc, 0, sizeof(searchJobAlloc));
-	InitializeCriticalSection(&searchJobLock);
+	if (threadCount < 1)
+	{
+		threadCount = 1;
+	}
+	else if (threadCount > 32) 
+	{
+		threadCount = 32;
+	}
+	
+	HANDLE threads[32] = {0};
+	SearchContext searchContexts[32] = {0};
+	LONG match_count = 0;
+	for (int i = 0; i < threadCount; ++i) 
+	{
+		searchContexts[i].b = b;
+		searchContexts[i].remainingFileCount = &file_count;
+		bore_prealloc(&searchContexts[i].filedata, 100000);
+		searchContexts[i].search = &search;
+		searchContexts[i].what = what;
+		searchContexts[i].what_len = what_len;
+		searchContexts[i].match = match;
+		searchContexts[i].matchSize = match_size;
+		searchContexts[i].matchCount = &match_count;
+	}
 
-	memset(searchResultAlloc, 0, sizeof(searchResultAlloc));
-	InitializeCriticalSection(&searchResultLock);
+	for (int i = 0; i < threadCount - 1; ++i)
+		threads[i] = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)SearchWorker, &searchContexts[i], 0, 0);
 
-	static int queue1Capacity= 10;
-	static int queue2Capacity= BORE_SEARCH_JOBS;
-	static int queue3Capacity= BORE_SEARCH_RESULTS;
-	static int wg1Capacity = 5; // File open threads
-	static int wg2Capacity = 1; // Read file threads
-	static int wg3Capacity = 1; // Search threads
-	static int wg4Capacity = 1; // Write result thread. Must be 1
+	SearchWorker(&searchContexts[threadCount - 1]);
 
-	// borefind 	// AI2System
-	// 1, 1, 1, 1 : 1400ms
-	// 1, 1, 2, 1 : 1400ms
-	// 2, 1, 1, 1 : 800ms
-	// 3, 1, 1, 1 : 630ms
-	// 4, 1, 1, 1 : 500ms
-	// 5, 1, 1, 1 :	480ms  <---
-	// 6, 1, 1, 1 :	530ms 
-	// 4, 1, 4, 1 :	500ms
-	// 4, 2, 1, 1 :	530ms
+	WaitForMultipleObjects(threadCount - 1, threads, TRUE, INFINITE);
 
-	SyncQueue<FileHandle> q1(queue1Capacity); // Open file handle
-	SyncQueue<int> q2(queue2Capacity); // Search job index
-	SyncQueue<int> q3(queue3Capacity); // Search result index
+	for (int i = 0; i < threadCount; ++i) 
+	{
+		if (searchContexts[i].wasTruncated) 
+		{
+			*truncated_ = 1;
+		}
+	}
 
-	OpenFileContext ofc;
-	ofc.b = b;
-	ofc.file_index = &file_index;
-	WorkGroup<short, FileHandle> wg1(wg1Capacity, 0, &q1, &openFileJob, &ofc);
+	for (int i = 0; i < threadCount; ++i) 
+	{
+		bore_alloc_free(&searchContexts[i].filedata);
+	}
 
-	ReadFileContext rfc;
-	rfc.b = b;
-	rfc.searchJobAlloc = searchJobAlloc;
-	rfc.searchJobLock = &searchJobLock;
-	WorkGroup<FileHandle, int> wg2(wg2Capacity, &q1, &q2, &readFileJob, &rfc);
-
-	SearchFileContext sfc;
-	sfc.b = b;
-	sfc.searchJobAlloc = searchJobAlloc;
-	sfc.searchJobLock = &searchJobLock;
-	sfc.searchResultAlloc = searchResultAlloc;
-	sfc.searchResultLock = &searchResultLock;
-	sfc.what = what;
-	sfc.what_len = strlen(what);
-	//OldSearch search; // 450ms
-	QuickSearch search(sfc.what, sfc.what_len); // 437ms
-	sfc.search = &search;
-	WorkGroup<int, int> wg3(wg3Capacity, &q2, &q3, &searchFileJob, &sfc);
-
-	WriteResultContext wrc;
-	wrc.b = b;
-	wrc.searchResultAlloc = searchResultAlloc;
-	wrc.searchResultLock = &searchResultLock;
-	wrc.truncated = 0;
-	wrc.match = match;
-	wrc.match_capacity = match_size;
-	wrc.match_count = 0;
-	WorkGroup<int, short> wg4(wg4Capacity, &q3, 0, &writeResultJob, &wrc);
-
-	wg4.join();
-	wg3.join();
-	wg2.join();
-	wg1.join();
-
-	DeleteCriticalSection(&searchJobLock);
-	DeleteCriticalSection(&searchResultLock);
-
-	*truncated_ = wrc.truncated;
-	return wrc.match_count;
+	return match_count;
 }
 
 

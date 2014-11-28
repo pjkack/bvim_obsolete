@@ -90,7 +90,7 @@ void bore_alloc_free(bore_alloc_t* p);
 
 char* bore_str(bore_t* b, u32 offset);
 
-int bore_dofind(bore_t* b, int* truncated, bore_match_t* match, int match_size, const char* what);
+int bore_dofind(bore_t* b, int threadCount, int* truncated, bore_match_t* match, int match_size, const char* what);
 
 #ifdef __cplusplus
 }
