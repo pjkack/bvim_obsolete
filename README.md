@@ -1,7 +1,7 @@
-BVIM, gvim with VS2010 extensions
+BVIM, gvim with Visual Studio extensions
 =======================================================
 
-bvim is a hacked version of gvim which adds a few features which helps working on large Visual Studio 2010 projects.
+bvim is a hacked version of gvim which adds a few features which helps working on large Visual Studio projects.
 
 The goal is to make all common programming actions take less than 500ms on a fast machine.
 
@@ -29,3 +29,6 @@ g:bore_filelist_file
 -------------------------------------------------------
 The filename of the file which contains a list of all files included in the solution. Useful for e.g. building a tags file from all solution files.
 
+g:bore_search_thread_count
+-------------------------------------------------------
+The number of threads used by borefind. Defaults to 4.
