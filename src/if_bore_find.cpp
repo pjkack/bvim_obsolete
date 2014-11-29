@@ -249,8 +249,9 @@ static void SearchOneFile(struct SearchContext* searchContext, const char* filen
 			searchContext->wasTruncated = 2; // Out of space. Signal quit.
 			n = searchContext->matchSize - startIndex;
 		}
-			
-		memcpy(&searchContext->match[startIndex], search_result.result, sizeof(bore_match_t) * n);
+
+		if (n > 0)
+			memcpy(&searchContext->match[startIndex], search_result.result, sizeof(bore_match_t) * n);
 	
 		BORE_CVENDSPAN();
 	}
@@ -337,6 +338,7 @@ int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match
 		if (searchContexts[i].wasTruncated) 
 		{
 			*truncated_ = 1;
+			match_count = match_size;
 		}
 	}
 
