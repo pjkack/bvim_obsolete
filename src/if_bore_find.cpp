@@ -335,10 +335,12 @@ int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match
 
 	for (int i = 0; i < threadCount; ++i) 
 	{
-		if (searchContexts[i].wasTruncated) 
+		int wasTruncated = searchContexts[i].wasTruncated;
+		if (wasTruncated > *truncated_) 
 		{
-			*truncated_ = 1;
-			match_count = match_size;
+			*truncated_ = wasTruncated;
+			if (*truncated_ > 1)
+				match_count = match_size;
 		}
 	}
 
