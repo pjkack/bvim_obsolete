@@ -83,6 +83,7 @@ static void bore_free(bore_t* b)
 	if (!b) return;
 	vim_free(b->filelist_tmp_file);
 	bore_alloc_free(&b->file_alloc);
+	bore_alloc_free(&b->toggle_index_alloc);
 	bore_alloc_free(&b->data_alloc);
 	bore_alloc_free(&b->proj_alloc);
 	for (i = 0; i < BORE_SEARCH_JOBS; ++i) {
