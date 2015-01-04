@@ -333,14 +333,14 @@ int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match
 
 	WaitForMultipleObjects(threadCount - 1, threads, TRUE, INFINITE);
 
-	for (int i = 0; i < threadCount; ++i) 
+	for (int i = 0; i < threadCount; ++i)
 	{
-		if (searchContexts[i].wasTruncated) 
-		{
-			*truncated_ = 1;
-			match_count = match_size;
-		}
+		if (searchContexts[i].wasTruncated > *truncated_)
+			*truncated_ = searchContexts[i].wasTruncated;
 	}
+
+	if (*truncated_ > 1)
+		match_count = match_size;
 
 	for (int i = 0; i < threadCount; ++i) 
 	{
