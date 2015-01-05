@@ -83,6 +83,7 @@ static void bore_free(bore_t* b)
 	if (!b) return;
 	vim_free(b->filelist_tmp_file);
 	bore_alloc_free(&b->file_alloc);
+	bore_alloc_free(&b->toggle_index_alloc);
 	bore_alloc_free(&b->data_alloc);
 	bore_alloc_free(&b->proj_alloc);
 	for (i = 0; i < BORE_SEARCH_JOBS; ++i) {
@@ -103,6 +104,93 @@ static u32 bore_strndup(bore_t* b, const char* s, int len)
 	p[len] = 0;
 	return p - (char*)b->data_alloc.base;
 }
+
+static int bore_append_solution_files(bore_t* b, const char* sln_path)
+{
+	int result = FAIL;
+	FILE* f = fopen(sln_path, "rb");
+	int file_index = 0;
+	int state = 0;
+	u32* files = 0;
+	char buf[BORE_MAX_PATH];
+	char fn[BORE_MAX_PATH];
+	if (!f) {
+		goto done;
+	}
+	
+	// There cannot be more than solutionLineCount files in the sln-files. The files are specified one on each row.
+	files = (u32*)bore_alloc(&b->file_alloc, sizeof(u32)*b->solutionLineCount);
+
+	while (0 == vim_fgets((char_u*)buf, sizeof(buf), f)) {
+		if (state == 0)	{
+			if (strstr(buf, "ProjectSection(SolutionItems) = preProject"))
+				state = 1;
+		} else {
+			if (strstr(buf, "EndProjectSection")) {
+				state = 0;
+			} else {
+				char* ends = strstr(buf, " = ");
+				if (ends) {
+					DWORD attr = 0;
+					*ends = 0;
+					if (FAIL != bore_canonicalize(&buf[2], fn, &attr)) {
+						if (!(FILE_ATTRIBUTE_DIRECTORY & attr))
+							files[file_index++] = bore_strndup(b, fn, strlen(fn));
+					}
+
+				} else {
+					state = 0;
+				}
+			}
+		}
+	}
+
+	b->file_count += file_index;
+	bore_alloc_trim(&b->file_alloc, sizeof(u32)*(b->solutionLineCount - file_index));
+
+	fclose(f);
+
+	result = OK;
+done:
+	return result;
+
+
+#if 0
+	int i, file_index;
+	u32* files = (u32*)bore_alloc(&b->file_alloc, sizeof(u32)*result_count);
+
+	for(i = 0, file_index = 0; i < result_count; ++i) {
+		char buf[BORE_MAX_PATH];
+		const char* fn;
+		DWORD attr;
+		int len;
+		const char* ext;
+		int skipFile = 0;
+
+		roxml_get_content(result[i], filename_part, BORE_MAX_PATH - path_part_len, 0);
+		len = strlen(filename_part);
+		/* roxml sometimes returns paths with trailing " */
+		while(len > 0 && filename_part[len - 1] == '\"') {
+			--len;
+			filename_part[len] = 0;
+		}
+		fn = (strlen(filename_part) >=2 && filename_part[1] == ':') ? filename_part : filename_buf;
+
+		ext = strrchr(filename_part, '.');
+		if (ext) {
+			if (0 == stricmp(ext, ".build") || 0 == stricmp(ext, ".vcxproj"))
+				skipFile = 1;
+		}
+		if (!skipFile && FAIL != bore_canonicalize(fn, buf, &attr)) {
+			if (!(FILE_ATTRIBUTE_DIRECTORY & attr))
+				files[file_index++] = bore_strndup(b, buf, strlen(buf));
+		}
+	}
+	b->file_count += file_index;
+	bore_alloc_trim(&b->file_alloc, sizeof(u32)*(result_count - file_index));
+#endif
+}
+
 
 static void bore_append_vcxproj_files(bore_t* b, node_t** result, int result_count,
 	char* filename_buf, char* filename_part, int path_part_len)
@@ -184,7 +272,9 @@ static int bore_extract_projects_from_sln(bore_t* b, const char* sln_path)
 		goto done;
 	}
 
+	b->solutionLineCount = 0;
 	while (0 == vim_fgets((char_u*)buf, sizeof(buf), f)) {
+		b->solutionLineCount++;
 	    if (vim_regexec_nl(&regmatch, buf, (colnr_T)0)) {
 			bore_proj_t* proj = (bore_proj_t*)bore_alloc(&b->proj_alloc, sizeof(bore_proj_t));
 			++b->proj_count;
@@ -236,6 +326,9 @@ static int bore_sort_filename(void* ctx, const void* vx, const void* vy)
 static int bore_sort_and_cleanup_files(bore_t* b)
 {
 	u32* files = (u32*)b->file_alloc.base;
+
+	if (b->file_count == 0)
+		return OK;
 
 	// sort
 	qsort_s(files, b->file_count, sizeof(u32), bore_sort_filename, b);
@@ -389,10 +482,16 @@ static void bore_load_sln(const char* path)
 	pc = vim_strrchr(bore_str(b, b->sln_dir), '\\');
 	if (pc)
 		*++pc = 0;
-	
+
+	sprintf(buf, "cd %s", bore_str(b, b->sln_dir));
+    do_cmdline_cmd(buf);
+
 	bore_load_ini(&b->ini, bore_str(b, b->sln_dir));
 
-	if (FAIL == bore_extract_projects_from_sln(b, buf))
+	if (FAIL == bore_extract_projects_from_sln(b, bore_str(b, b->sln_path)))
+		goto fail;
+
+	if (FAIL == bore_append_solution_files(b, bore_str(b, b->sln_path)))
 		goto fail;
 
 	if (FAIL == bore_extract_files_from_projects(b))
@@ -410,9 +509,6 @@ static void bore_load_sln(const char* path)
 	sprintf(buf, "let g:bore_filelist_file=\'%s\'", b->filelist_tmp_file);
     do_cmdline_cmd(buf);
 
-	sprintf(buf, "cd %s", bore_str(b, b->sln_dir));
-    do_cmdline_cmd(buf);
-	
 	g_bore = b;
 	return;
 
@@ -520,7 +616,14 @@ static int bore_find(bore_t* b, char* what)
 
 	match = (bore_match_t*)alloc(MaxMatch * sizeof(bore_match_t));
 
-	found = bore_dofind(b, &truncated, match, MaxMatch, what);
+	int threadCount = 4;
+	const char_u* threadCountStr = get_var_value((char_u *)"g:bore_search_thread_count");
+	if (threadCountStr)
+	{
+		threadCount = atoi(threadCountStr);
+	}
+
+	found = bore_dofind(b, threadCount, &truncated, match, MaxMatch, what);
 
 	cf = mch_fopen((char *)tmp, "wb");
 	if (cf == NULL) {

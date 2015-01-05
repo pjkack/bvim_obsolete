@@ -58,6 +58,8 @@ typedef struct bore_t {
 	u32 sln_path; // abs path of solution
 	u32 sln_dir;  // abs dir of solution
 
+	int solutionLineCount; // number of lines in the solution file
+
 	char* filelist_tmp_file; // name of temporary filelist file
 
 	// array of bore_proj_t (all projects in the solution)
@@ -88,7 +90,7 @@ void bore_alloc_free(bore_alloc_t* p);
 
 char* bore_str(bore_t* b, u32 offset);
 
-int bore_dofind(bore_t* b, int* truncated, bore_match_t* match, int match_size, const char* what);
+int bore_dofind(bore_t* b, int threadCount, int* truncated, bore_match_t* match, int match_size, const char* what);
 
 #ifdef __cplusplus
 }
