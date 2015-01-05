@@ -485,7 +485,7 @@ static void bore_display_search_result(bore_t* b, const char* filename)
 	char* title[] = {"Bore Find", 0};
 
 	memset(&eap, 0, sizeof(eap));
-	eap.cmdidx = CMD_cfile;
+	eap.cmdidx = CMD_cgetfile;
 	eap.arg = (char*)filename;
 	eap.cmdlinep = title;
 	ex_cfile(&eap);
