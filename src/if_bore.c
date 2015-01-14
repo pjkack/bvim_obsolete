@@ -105,6 +105,18 @@ static u32 bore_strndup(bore_t* b, const char* s, int len)
 	return p - (char*)b->data_alloc.base;
 }
 
+static int bore_is_excluded_extension(const char* ext)
+{
+	// TODO-jkjellstrom: Use extension hash when supported?
+	if (ext)
+	{
+		if (0 == stricmp(ext, ".dll") || 0 == stricmp(ext, ".vcxproj") || 0 == stricmp(ext, ".exe"))
+			return 1;
+	}
+
+	return 0;
+}
+
 static int bore_append_solution_files(bore_t* b, const char* sln_path)
 {
 	int result = FAIL;
@@ -134,7 +146,7 @@ static int bore_append_solution_files(bore_t* b, const char* sln_path)
 					DWORD attr = 0;
 					*ends = 0;
 					if (FAIL != bore_canonicalize(&buf[2], fn, &attr)) {
-						if (!(FILE_ATTRIBUTE_DIRECTORY & attr))
+						if (!(FILE_ATTRIBUTE_DIRECTORY & attr) && !bore_is_excluded_extension(vim_strrchr(fn, '.')))
 							files[file_index++] = bore_strndup(b, fn, strlen(fn));
 					}
 
@@ -153,44 +165,7 @@ static int bore_append_solution_files(bore_t* b, const char* sln_path)
 	result = OK;
 done:
 	return result;
-
-
-#if 0
-	int i, file_index;
-	u32* files = (u32*)bore_alloc(&b->file_alloc, sizeof(u32)*result_count);
-
-	for(i = 0, file_index = 0; i < result_count; ++i) {
-		char buf[BORE_MAX_PATH];
-		const char* fn;
-		DWORD attr;
-		int len;
-		const char* ext;
-		int skipFile = 0;
-
-		roxml_get_content(result[i], filename_part, BORE_MAX_PATH - path_part_len, 0);
-		len = strlen(filename_part);
-		/* roxml sometimes returns paths with trailing " */
-		while(len > 0 && filename_part[len - 1] == '\"') {
-			--len;
-			filename_part[len] = 0;
-		}
-		fn = (strlen(filename_part) >=2 && filename_part[1] == ':') ? filename_part : filename_buf;
-
-		ext = strrchr(filename_part, '.');
-		if (ext) {
-			if (0 == stricmp(ext, ".build") || 0 == stricmp(ext, ".vcxproj"))
-				skipFile = 1;
-		}
-		if (!skipFile && FAIL != bore_canonicalize(fn, buf, &attr)) {
-			if (!(FILE_ATTRIBUTE_DIRECTORY & attr))
-				files[file_index++] = bore_strndup(b, buf, strlen(buf));
-		}
-	}
-	b->file_count += file_index;
-	bore_alloc_trim(&b->file_alloc, sizeof(u32)*(result_count - file_index));
-#endif
 }
-
 
 static void bore_append_vcxproj_files(bore_t* b, node_t** result, int result_count,
 	char* filename_buf, char* filename_part, int path_part_len)
@@ -215,11 +190,8 @@ static void bore_append_vcxproj_files(bore_t* b, node_t** result, int result_cou
 		}
 		fn = (strlen(filename_part) >=2 && filename_part[1] == ':') ? filename_part : filename_buf;
 
-		ext = strrchr(filename_part, '.');
-		if (ext) {
-			if (0 == stricmp(ext, ".build") || 0 == stricmp(ext, ".vcxproj"))
-				skipFile = 1;
-		}
+		ext = vim_strrchr(filename_part, '.');
+		skipFile = bore_is_excluded_extension(ext);
 		if (!skipFile && FAIL != bore_canonicalize(fn, buf, &attr)) {
 			if (!(FILE_ATTRIBUTE_DIRECTORY & attr))
 				files[file_index++] = bore_strndup(b, buf, strlen(buf));
@@ -386,10 +358,10 @@ static int bore_build_toggle_index(bore_t* b)
 	bore_prealloc(&b->toggle_index_alloc, b->file_count * sizeof(bore_toggle_entry_t));
 	b->toggle_entry_count = 0;
 	for (i = 0; i < (u32)b->file_count; ++i) {
-		const char* path = bore_str(b, files[i]);
+		char* path = bore_str(b, files[i]);
 		u32 path_len = (u32)strlen(path);
-		const char* ext = strrchr(path, '.');
-		const char* basename = strrchr(path, '\\');
+		char* ext = vim_strrchr(path, '.');
+		char* basename = vim_strrchr(path, '\\');
 		bore_toggle_entry_t* e;
 		int j;
 		u32 ext_hash;
@@ -456,7 +428,6 @@ static void bore_load_sln(const char* path)
 {
 	char buf[BORE_MAX_PATH];
 	int i;
-	char* pc;
 	bore_t* b = (bore_t*)alloc(sizeof(bore_t));
 	memset(b, 0, sizeof(bore_t));
 
@@ -479,9 +450,25 @@ static void bore_load_sln(const char* path)
 
 	b->sln_path = bore_strndup(b, buf, strlen(buf));
 	b->sln_dir = bore_strndup(b, buf, strlen(buf));
-	pc = vim_strrchr(bore_str(b, b->sln_dir), '\\');
-	if (pc)
-		*++pc = 0;
+	
+	{
+		char* sln_dir_str = bore_str(b, b->sln_dir);
+		char* pc = vim_strrchr(sln_dir_str, '\\');
+		if (pc)	{
+			pc[1] = 0; // Keep trailing backslash
+		
+			// Special case. If the solution file is in a local folder, then assume 
+			// code paths start one level up from that
+			while (--pc > sln_dir_str) {
+				if (*pc == '\\') {
+					if (stricmp(pc, "\\Local\\") == 0) {
+						pc[1] = 0; // Keep trailing backslash
+					}
+					break;
+				}
+			}
+		}
+	}
 
 	sprintf(buf, "cd %s", bore_str(b, b->sln_dir));
     do_cmdline_cmd(buf);
@@ -521,19 +508,10 @@ fail:
 static void bore_print_sln()
 {
 	if (g_bore) {
-//		int i;
 		char status[BORE_MAX_PATH];
 		sprintf(status, "%s, %d projects, %d files", bore_str(g_bore, g_bore->sln_path),
 			g_bore->proj_count, g_bore->file_count);
 		MSG(_(status));
-
-
-		//for (i = 0; i < g_bore->file_count; ++i) {
-		//	char* fn = bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[i]);
-		//	ml_append(i		//	, fn, strlen(fn)+1, 0);
-		//}
-
-		//update_screen(VALID);
 	}
 }
 
@@ -664,35 +642,6 @@ static void bore_show_borebuf(const char* filename, int minheight, const char** 
 		EMSG(_("Load a solution first with boresln"));
 		return;
 	}
-
-	//if (eap != NULL)
-	//{
-	//	/*
-	//	* A ":boreopen" command ends at the first LF, or at a '|' that is
-	//	* followed by some text.  Set nextcmd to the following command.
-	//	*/
-	//	for (arg = eap->arg; *arg; ++arg)
-	//	{
-	//		if (*arg == '\n' || *arg == '\r'
-	//			|| (*arg == '|' && arg[1] != NUL && arg[1] != '|'))
-	//		{
-	//			*arg++ = NUL;
-	//			eap->nextcmd = arg;
-	//			break;
-	//		}
-	//	}
-	//	arg = eap->arg;
-
-	//	if (eap->skip)	    /* not executing commands */
-	//		return;
-	//}
-	//else
-	//	arg = (char_u *)"";
-
-	///* remove trailing blanks */
-	//p = arg + STRLEN(arg) - 1;
-	//while (p > arg && vim_iswhite(*p) && p[-1] != '\\')
-	//	*p-- = NUL;
 
 #ifdef FEAT_GUI
 	need_mouse_correct = TRUE;
@@ -866,11 +815,11 @@ void ex_boretoggle __ARGS((exarg_T *eap))
 
 		path_len = strlen(path);
 		
-		ext = strrchr(path, '.');
+		ext = vim_strrchr(path, '.');
 		ext = ext ? ext + 1 : path + path_len;
 		ext_hash = bore_string_hash(ext);
 		
-		basename = strrchr(path, '\\');
+		basename = vim_strrchr(path, '\\');
 		basename = basename ? basename + 1 : path;
 		basename_hash = bore_string_hash_n(basename, ext - basename);
 
