@@ -83,6 +83,7 @@ static void bore_free(bore_t* b)
 	if (!b) return;
 	vim_free(b->filelist_tmp_file);
 	bore_alloc_free(&b->file_alloc);
+	bore_alloc_free(&b->file_ext_alloc);
 	bore_alloc_free(&b->toggle_index_alloc);
 	bore_alloc_free(&b->data_alloc);
 	bore_alloc_free(&b->proj_alloc);
@@ -328,6 +329,24 @@ static int bore_sort_and_cleanup_files(bore_t* b)
 	return OK;
 }
 
+static int bore_build_extension_list(bore_t* b)
+{
+	u32* files = (u32*)b->file_alloc.base;
+	bore_alloc(&b->file_ext_alloc, b->file_count * sizeof(u32));
+	u32* ext_hash = (u32*)b->file_ext_alloc.base;
+	u32 i;
+	for (i = 0; i < (u32)b->file_count; ++i) {
+		char* path = bore_str(b, files[i]);
+		u32 path_len = (u32)strlen(path);
+		char* ext = vim_strrchr(path, '.');
+		
+		ext = ext ? ext + 1 : path + path_len;
+		ext_hash[i] = bore_string_hash(ext);
+	}
+	
+	return OK;
+}
+
 static int bore_sort_toggle_entry(const void* vx, const void* vy)
 {
 	const bore_toggle_entry_t* x = (const bore_toggle_entry_t*)vx;
@@ -489,6 +508,9 @@ static void bore_load_sln(const char* path)
 	if (FAIL == bore_sort_and_cleanup_files(b))
 		goto fail;
 
+	if (FAIL == bore_build_extension_list(b))
+		goto fail;
+
 	if (FAIL == bore_build_toggle_index(b))
 		goto fail;
 
@@ -595,7 +617,7 @@ static void bore_save_match_to_file(bore_t* b, FILE* cf, const bore_match_t* mat
 	}
 }
 
-static int bore_find(bore_t* b, char* what)
+static int bore_find(bore_t* b, char* what, char* what_ext)
 {
 	enum { MaxMatch = 1000 };
 	u32* files = (u32*)b->file_alloc.base;
@@ -614,7 +636,36 @@ static int bore_find(bore_t* b, char* what)
 		threadCount = atoi(threadCountStr);
 	}
 
-	found = bore_dofind(b, threadCount, &truncated, match, MaxMatch, what);
+	bore_search_t search;
+	search.what = what;
+	search.what_len = strlen(what);
+	search.ext_count = 0;
+
+	// parse comma separated list of file extensions into list of hashes
+	if (what_ext)
+	{
+	    int len = 0;
+	    char* ext = what_ext;
+	    char* c;
+	    for (c = ext; search.ext_count < BORE_MAX_SEARCH_EXTENSIONS; ++c)
+	    {
+			if (*c == ',' || *c == '\0')
+			{
+				search.ext[search.ext_count++] = bore_string_hash_n(ext, len);
+				ext = c + 1;
+				len = 0;
+			}
+			else
+			{
+				++len;
+			}
+
+			if (*c == '\0')
+				break;
+	    }
+	}
+
+	found = bore_dofind(b, threadCount, &truncated, match, MaxMatch, &search);
 
 	cf = mch_fopen((char *)tmp, "wb");
 	if (cf == NULL) {
@@ -766,15 +817,71 @@ void ex_boresln __ARGS((exarg_T *eap))
 	}
 }
 
+void borefind_parse_options(char* arg, char** what, char** what_ext)
+{
+	// Usage: [option(s)] what
+	//   -e ext1,ext2,...,ext12
+	//      filters the search based on a list of file extensions
+	//   - 
+	//   -u
+	//      an empty (or any unknown) option will force the remainder to be treated as the search string
+
+	char* opt = NUL;
+	*what = arg;
+	*what_ext = NUL;
+
+	for (; *arg; ++arg)
+	{
+		if (NUL == opt)
+		{
+			if ('-' == *arg)
+			{
+				// found new option marker
+				++arg;
+				if (*arg == 'e' && arg[1] == ' ')
+				{
+					// found extension option argument start, loop until next space
+					opt = arg;
+					*what_ext = &opt[2];
+					arg += 2;
+				}
+				else
+				{
+					// empty or unknown option, treat the rest as the search string
+					*what = arg + 1;
+					break;
+				}
+			}
+			else
+			{
+				// no option found, treat the rest as the search string
+				*what = arg;
+				break;
+			}
+		}
+		else if (' ' == *arg)
+		{
+			// end current option argument string and search for next option
+			opt = NUL;
+			*arg = '\0';
+		}
+	}
+}
+
 void ex_borefind __ARGS((exarg_T *eap))
 {
 	if (!g_bore) {
 		EMSG(_("Load a solution first with boresln"));
-    } else {
+	}
+	else {
 		DWORD start = GetTickCount();
 		DWORD elapsed;
 		char mess[100];
-		int found = bore_find(g_bore, (char*)eap->arg);
+		char* what;
+		char* what_ext;
+
+		borefind_parse_options((char*)eap->arg, &what, &what_ext);
+		int found = bore_find(g_bore, what, what_ext);
 		elapsed = GetTickCount() - start;
 		sprintf(mess, "Matching lines: %d%s Elapsed time: %u ms", found > 0 ? found : -found, found < 0 ? " (truncated)" : "", elapsed);
 		MSG(_(mess));

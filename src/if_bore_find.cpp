@@ -152,9 +152,8 @@ struct SearchContext
 	bore_t* b;
 	LONG* remainingFileCount;
 	bore_alloc_t filedata;
-	const ExactStringSearch* search;
-	const char* what;
-	int what_len;
+	const ExactStringSearch* stringSearch;
+	bore_search_t* search;
 	bore_match_t* match;
 	LONG matchSize;
 	LONG* matchCount;
@@ -212,11 +211,11 @@ static void SearchOneFile(struct SearchContext* searchContext, const char* filen
 
 		// Search for the text
 		int match_offset[BORE_MAXMATCHPERFILE];
-		int match_in_file = searchContext->search->search(
+		int match_in_file = searchContext->stringSearch->search(
 			(char*)searchContext->filedata.base, 
 			searchContext->filedata.cursor - searchContext->filedata.base,
-			searchContext->what, 
-			searchContext->what_len, 
+			searchContext->search->what, 
+			searchContext->search->what_len, 
 			&match_offset[0], 
 			&match_offset[BORE_MAXMATCHPERFILE]);
 
@@ -272,6 +271,21 @@ static DWORD WINAPI SearchWorker(struct SearchContext* searchContext)
 		if (fileIndex < 0)
 			break;
 
+		// skip files based on file extension filter
+		if (searchContext->search->ext_count > 0)
+		{
+			u32 fileExt = *((u32*)searchContext->b->file_ext_alloc.base + fileIndex);
+			int i;
+			for (i = 0; i < searchContext->search->ext_count; ++i)
+			{
+				if (fileExt == searchContext->search->ext[i])
+					break;
+			}
+
+			if (i == searchContext->search->ext_count)
+				continue;
+		}
+
 		u32* const files = (u32*)searchContext->b->file_alloc.base;
 		SearchOneFile(searchContext, bore_str(searchContext->b, files[fileIndex]), fileIndex);
 
@@ -282,7 +296,7 @@ static DWORD WINAPI SearchWorker(struct SearchContext* searchContext)
 	return 0;
 }
 
-int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match, int match_size, const char* what)
+int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match, int match_size, bore_search_t* search)
 {
 #ifdef BORE_CVPROFILE
 	if (!g_cvInitialized)
@@ -295,11 +309,10 @@ int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match
 #endif	
 
 	u32* const files = (u32*)b->file_alloc.base;
-	const int what_len = strlen(what);
 	LONG file_count = b->file_count;
 	*truncated_ = 0;	
 	
-	QuickSearch search(what, what_len);
+	QuickSearch stringSearch(search->what, search->what_len);
 
 	if (threadCount < 1)
 	{
@@ -318,9 +331,8 @@ int bore_dofind(bore_t* b, int threadCount, int* truncated_, bore_match_t* match
 		searchContexts[i].b = b;
 		searchContexts[i].remainingFileCount = &file_count;
 		bore_prealloc(&searchContexts[i].filedata, 100000);
-		searchContexts[i].search = &search;
-		searchContexts[i].what = what;
-		searchContexts[i].what_len = what_len;
+		searchContexts[i].stringSearch = &stringSearch;
+		searchContexts[i].search = search;
 		searchContexts[i].match = match;
 		searchContexts[i].matchSize = match_size;
 		searchContexts[i].matchCount = &match_count;
