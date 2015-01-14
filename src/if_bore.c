@@ -471,7 +471,9 @@ static void bore_load_sln(const char* path)
 	}
 
 	sprintf(buf, "cd %s", bore_str(b, b->sln_dir));
-    do_cmdline_cmd(buf);
+	++msg_silent;
+	do_cmdline_cmd(buf);
+	--msg_silent;
 
 	bore_load_ini(&b->ini, bore_str(b, b->sln_dir));
 
@@ -493,6 +495,9 @@ static void bore_load_sln(const char* path)
 	if (FAIL == bore_write_filelist_to_tempfile(b))
 		goto fail;
 
+	sprintf(buf, "let g:bore_base_dir=\'%s\'", bore_str(b, b->sln_dir));
+    do_cmdline_cmd(buf);
+
 	sprintf(buf, "let g:bore_filelist_file=\'%s\'", b->filelist_tmp_file);
     do_cmdline_cmd(buf);
 
@@ -505,12 +510,20 @@ fail:
 	return;
 }
 
-static void bore_print_sln()
+static void bore_print_sln(DWORD elapsed)
 {
 	if (g_bore) {
 		char status[BORE_MAX_PATH];
-		sprintf(status, "%s, %d projects, %d files", bore_str(g_bore, g_bore->sln_path),
+		if (elapsed)
+		{
+		    sprintf(status, "%s, %d projects, %d files (%u ms)", bore_str(g_bore, g_bore->sln_path),
+			g_bore->proj_count, g_bore->file_count, elapsed);
+		}
+		else
+		{
+		    sprintf(status, "%s, %d projects, %d files", bore_str(g_bore, g_bore->sln_path),
 			g_bore->proj_count, g_bore->file_count);
+		}	    
 		MSG(_(status));
 	}
 }
@@ -743,16 +756,13 @@ erret:
 void ex_boresln __ARGS((exarg_T *eap))
 {
     if (*eap->arg == NUL) {
-		bore_print_sln();
+		bore_print_sln(0);
     } else {
 		DWORD start = GetTickCount();
 		DWORD elapsed;
-		char mess[100];
 		bore_load_sln((char*)eap->arg);
 		elapsed = GetTickCount() - start;
-		sprintf(mess, "Elapsed time: %u ms", elapsed);
-		bore_print_sln();
-		MSG(_(mess));
+		bore_print_sln(elapsed);
 	}
 }
 
