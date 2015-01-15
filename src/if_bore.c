@@ -592,9 +592,9 @@ static u32 bore_string_hash_n(const char *str, int n)
 static void bore_display_search_result(bore_t* b, const char* filename, char* what, int found)
 {
 	exarg_T eap;
-	char buf[256];
+	char buf[100];
 	char *title = buf;
-	vim_snprintf(buf, 256, "borefind \"%s\", %d lines%s", what, found > 0 ? found : -found, found < 0 ? " (truncated)" : "");
+	vim_snprintf(buf, 100, "borefind \"%s\", %d lines%s", what, found > 0 ? found : -found, found < 0 ? " (truncated)" : "");
 
 	memset(&eap, 0, sizeof(eap));
 	eap.cmdidx = CMD_cgetfile;
@@ -669,6 +669,8 @@ static int bore_find(bore_t* b, char* what, char* what_ext)
 	}
 
 	found = bore_dofind(b, threadCount, &truncated, match, MaxMatch, &search);
+	if (0 == found)
+	    goto fail;
 
 	cf = mch_fopen((char *)tmp, "wb");
 	if (cf == NULL) {
@@ -886,8 +888,16 @@ void ex_borefind __ARGS((exarg_T *eap))
 		borefind_parse_options((char*)eap->arg, &what, &what_ext);
 		int found = bore_find(g_bore, what, what_ext);
 		elapsed = GetTickCount() - start;
-		sprintf(mess, "Matching lines: %d%s Elapsed time: %u ms", found > 0 ? found : -found, found < 0 ? " (truncated)" : "", elapsed);
-		MSG(_(mess));
+		if (found)
+		{
+		    vim_snprintf(mess, 100, "Matching lines: %d%s Elapsed time: %u ms", found > 0 ? found : -found, found < 0 ? " (truncated)" : "", elapsed);
+		    MSG(_(mess));
+		}
+		else
+		{
+		    vim_snprintf(mess, 100, "No matching lines for \"%s\": Elapsed time: %u ms", what, elapsed);
+		    EMSG(_(mess));
+		}
 	}
 }
 
