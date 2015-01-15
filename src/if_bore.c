@@ -588,15 +588,18 @@ static u32 bore_string_hash_n(const char *str, int n)
       h = 33 * h + tolower(*p);
    return h + (h >> 5);
 }
-static void bore_display_search_result(bore_t* b, const char* filename)
+
+static void bore_display_search_result(bore_t* b, const char* filename, char* what, int found)
 {
 	exarg_T eap;
-	char* title[] = {"Bore Find", 0};
+	char buf[256];
+	char *title = buf;
+	vim_snprintf(buf, 256, "borefind \"%s\", %d lines%s", what, found > 0 ? found : -found, found < 0 ? " (truncated)" : "");
 
 	memset(&eap, 0, sizeof(eap));
 	eap.cmdidx = CMD_cgetfile;
 	eap.arg = (char*)filename;
-	eap.cmdlinep = title;
+	eap.cmdlinep = &title;
 	ex_cfile(&eap);
 	
 	memset(&eap, 0, sizeof(eap));
@@ -676,7 +679,7 @@ static int bore_find(bore_t* b, char* what, char* what_ext)
 
 	fclose(cf);
 
-	bore_display_search_result(b, tmp);
+	bore_display_search_result(b, tmp, what, truncated ? -found : found);
 	mch_remove(tmp);
 fail:
 	vim_free(tmp);
