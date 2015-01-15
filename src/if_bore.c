@@ -1025,9 +1025,12 @@ void ex_boretoggle __ARGS((exarg_T *eap))
 		}
 
 		{
-			char_u* fn = vim_strsave(bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e_best->fileindex]));
+			const char *slndir = bore_str(g_bore, g_bore->sln_dir);
+			int slndirlen = strlen(slndir);
+			char *fn = bore_str(g_bore, ((u32*)g_bore->file_alloc.base)[e_best->fileindex]);
+			if (strncmp(fn, slndir, slndirlen) == 0)
+			    fn += slndirlen;
 			bore_open_file_buffer(fn);
-			vim_free(fn);
 		}
 	}
 }
