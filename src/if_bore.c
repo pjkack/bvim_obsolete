@@ -922,6 +922,31 @@ int bore_toggle_entry_score(const char* buffer_name, const char* candidate)
 	return score;
 }
 
+void bore_open_file_buffer(char_u* fn)
+{ 
+	buf_T* buf;
+
+	buf = buflist_findname_exp(fn);
+	if (NULL == buf)
+	    goto edit;
+
+	if (NULL != buf->b_ml.ml_mfp && NULL != buf_jump_open_tab(buf))
+	    goto verify;
+
+	set_curbuf(buf, DOBUF_GOTO);
+
+verify:
+	if (buf != curbuf)
+edit:
+	{
+	    exarg_T ea;
+	    memset(&ea, 0, sizeof(ea));
+	    ea.arg = fn;
+	    ea.cmdidx = CMD_edit;
+	    do_exedit(&ea, NULL);
+	}
+}
+
 void ex_boretoggle __ARGS((exarg_T *eap))
 {
 	if (!g_bore)
@@ -1000,12 +1025,9 @@ void ex_boretoggle __ARGS((exarg_T *eap))
 		}
 
 		{
-			exarg_T ea;
-			memset(&ea, 0, sizeof(ea));
-			ea.arg = vim_strsave(bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e_best->fileindex]));
-			ea.cmdidx = CMD_edit;
-			do_exedit(&ea, NULL);
-			vim_free(ea.arg);
+			char_u* fn = vim_strsave(bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e_best->fileindex]));
+			bore_open_file_buffer(fn);
+			vim_free(fn);
 		}
 	}
 }
@@ -1016,7 +1038,6 @@ void ex_boretoggle __ARGS((exarg_T *eap))
 void ex_Boreopenselection __ARGS((exarg_T *eap))
 {
 	char_u* fn;
-	exarg_T ea;
 	if (!g_bore)
 		return;
 	fn = vim_strsave(ml_get_curline());
@@ -1025,10 +1046,7 @@ void ex_Boreopenselection __ARGS((exarg_T *eap))
 
 	win_close(curwin, TRUE);
 
-	memset(&ea, 0, sizeof(ea));
-	ea.arg = fn;
-	ea.cmdidx = CMD_edit;
-	do_exedit(&ea, NULL);
+	bore_open_file_buffer(fn);
 	vim_free(fn);
 }
 
