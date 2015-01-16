@@ -906,7 +906,10 @@ void ex_boreopen __ARGS((exarg_T *eap))
 	if (!g_bore)
 		EMSG(_("Load a solution first with boresln"));
 	else {
-		const char* mappings[] = {"<CR> :ZZBoreopenselection<CR>", 0};
+		const char* mappings[] = {
+		    "<CR> :ZZBoreopenselection<CR>", 
+		    "<2-LeftMouse> :ZZBoreopenselection<CR>",
+		    0};
 		bore_show_borebuf(g_bore->filelist_tmp_file, g_bore->ini.borebuf_height, mappings);
 	}
 }
