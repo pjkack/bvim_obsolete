@@ -10,6 +10,7 @@ extern "C" {
 #define BORE_SEARCH_RESULTS 8
 #define BORE_CACHELINE 64 
 #define BORE_MAXMATCHPERFILE 100
+#define BORE_MAX_SEARCH_EXTENSIONS 12
 
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -25,6 +26,13 @@ typedef struct bore_proj_t {
 	u32 project_name;
 	u32 project_path;
 } bore_proj_t;
+
+typedef struct bore_search_t {
+	const char* what;
+	int what_len;
+	int ext_count;
+	u32 ext[BORE_MAX_SEARCH_EXTENSIONS]; // (64-16)/4
+} bore_search_t;
 
 typedef struct bore_match_t {
 	u32 file_index;
@@ -68,7 +76,8 @@ typedef struct bore_t {
 
 	// array of files in the solution
 	int file_count;
-	bore_alloc_t file_alloc;
+	bore_alloc_t file_alloc;     // filename string pointers
+	bore_alloc_t file_ext_alloc; // filename extension hashes
 
 	// array of bore_toggle_entry_t;
 	int toggle_entry_count;
@@ -90,7 +99,7 @@ void bore_alloc_free(bore_alloc_t* p);
 
 char* bore_str(bore_t* b, u32 offset);
 
-int bore_dofind(bore_t* b, int threadCount, int* truncated, bore_match_t* match, int match_size, const char* what);
+int bore_dofind(bore_t* b, int threadCount, int* truncated, bore_match_t* match, int match_size, bore_search_t* search);
 
 #ifdef __cplusplus
 }

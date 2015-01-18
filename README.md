@@ -21,13 +21,17 @@ boretoggle
 -------------------------------------------------------
 Cycle between related files in the solution. The order is hardcoded to> cpp cxx c inl hpp hxx h asm s ddf
 
-borefind `<string`>
+borefind [-e ext1,ext2,...,ext12] `<string`>
 -------------------------------------------------------
-Do a case sensitive search through all files in the solution for <string>. At most 100 hits per file is reported and the total hits is capped to 1000. 
+Do a case sensitive search through all files in the solution for <string>, optionally limited to a set of file extensions. At most 100 hits per file is reported and the total hits is capped to 1000. 
+
+g:bore_base_dir
+-------------------------------------------------------
+The base directory of the solution file. It is either the directory of the solution file itself, or its parent directory. All bore file paths are relative to this directory. Useful for e.g. writing a single tags file from all solution files.
 
 g:bore_filelist_file
 -------------------------------------------------------
-The filename of the file which contains a list of all files included in the solution. Useful for e.g. building a tags file from all solution files.
+The filename of the file which contains a list of relative paths for all files included in the solution. Useful for e.g. building a tags file from all solution files.
 
 g:bore_search_thread_count
 -------------------------------------------------------
