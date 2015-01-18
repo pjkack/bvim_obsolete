@@ -1085,7 +1085,14 @@ _WndProc(
 	    return MyWindowProc(hwnd, uMsg, wParam, lParam);
 	break;
 #endif
-
+#ifdef FEAT_BORE
+    case WM_USER + 1234:
+    {
+	extern void bore_async_execute_completed();
+	bore_async_execute_completed();
+	break;
+    } 
+#endif
     default:
 	if (uMsg == msh_msgmousewheel && msh_msgmousewheel != 0)
 	{   /* handle MSH_MOUSEWHEEL messages for Intellimouse */
