@@ -15,6 +15,23 @@
 #include "regexp.h"
 #include "if_bore.h"
 
+//#define BORE_VIMPROFILE
+
+#ifdef BORE_VIMPROFILE
+#define BORE_VIMPROFILE_INIT proftime_T ptime
+#define BORE_VIMPROFILE_START profile_start(&ptime)
+#define BORE_VIMPROFILE_STOP(str) do { \
+    char mess[100]; \
+    profile_end(&ptime); \
+    vim_snprintf(mess, 100, "%s %s", profile_msg(&ptime), str); \
+    MSG(_(mess)); \
+} while(0)
+#else
+#define BORE_VIMPROFILE_INIT
+#define BORE_VIMPROFILE_START
+#define BORE_VIMPROFILE_STOP(str)
+#endif
+
 #if defined(FEAT_BORE)
 
 #include "roxml.h"
@@ -508,26 +525,42 @@ static void bore_load_sln(const char* path)
 
     bore_load_ini(&b->ini, bore_str(b, b->sln_dir));
 
+    BORE_VIMPROFILE_INIT;
+
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_extract_projects_from_sln(b, bore_str(b, b->sln_path)))
         goto fail;
+    BORE_VIMPROFILE_STOP("bore_extract_projects_from_sln");
 
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_append_solution_files(b, bore_str(b, b->sln_path)))
         goto fail;
+    BORE_VIMPROFILE_STOP("bore_append_solution_files");
 
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_extract_files_from_projects(b))
         goto fail;
+    BORE_VIMPROFILE_STOP("bore_extract_files_from_projects");
 
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_sort_and_cleanup_files(b))
         goto fail;
+    BORE_VIMPROFILE_STOP("bore_sort_and_cleanup_files");
 
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_build_extension_list(b))
         goto fail;
+    BORE_VIMPROFILE_STOP("bore_build_extension_list");
 
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_build_toggle_index(b))
         goto fail;
+    BORE_VIMPROFILE_STOP("bore_build_toggle_index");
 
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_write_filelist_to_tempfile(b))
         goto fail;
+    BORE_VIMPROFILE_STOP("bore_write_filelist_to_tempfile");
 
     sprintf(buf, "let g:bore_base_dir=\'%s\'", bore_str(b, b->sln_dir));
     do_cmdline_cmd(buf);
@@ -1115,14 +1148,14 @@ void bore_open_file_buffer(char_u* fn)
 
 verify:
     if (buf != curbuf)
-        edit:
-        {
-            exarg_T ea;
-            memset(&ea, 0, sizeof(ea));
-            ea.arg = fn;
-            ea.cmdidx = CMD_edit;
-            do_exedit(&ea, NULL);
-        }
+edit:
+    {
+        exarg_T ea;
+        memset(&ea, 0, sizeof(ea));
+        ea.arg = fn;
+        ea.cmdidx = CMD_edit;
+        do_exedit(&ea, NULL);
+    }
 }
 
 void ex_boretoggle __ARGS((exarg_T *eap))
