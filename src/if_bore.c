@@ -292,12 +292,12 @@ static int bore_extract_files_from_projects(bore_t* b)
 {
     bore_proj_t* proj = (bore_proj_t*)b->proj_alloc.base;
     int i;
-    char path[BORE_MAX_PATH];
 
     for (i = 0; i < b->proj_count; ++i) {
         if (proj[i].project_path) {
-            sprintf(path, "%s.filters", bore_str(b, proj[i].project_path));
-            bore_load_vcxproj_filters(b, path);
+            //char path[BORE_MAX_PATH];
+            //sprintf(path, "%s.filters", bore_str(b, proj[i].project_path));
+            //bore_load_vcxproj_filters(b, path);
             bore_load_vcxproj_filters(b, bore_str(b, proj[i].project_path));
         }
     }
