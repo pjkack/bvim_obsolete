@@ -99,6 +99,7 @@ static void bore_free(bore_t* b)
     if (!b) return;
     vim_free(b->filelist_tmp_file);
     bore_alloc_free(&b->file_alloc);
+    bore_alloc_free(&b->file_proj_alloc);
     bore_alloc_free(&b->file_ext_alloc);
     bore_alloc_free(&b->toggle_index_alloc);
     bore_alloc_free(&b->data_alloc);
@@ -140,7 +141,7 @@ static int bore_append_solution_files(bore_t* b, const char* sln_path)
     FILE* f = fopen(sln_path, "rb");
     int file_index = 0;
     int state = 0;
-    u32* files = 0;
+    bore_file_t* files = 0;
     char buf[BORE_MAX_PATH];
     char fn[BORE_MAX_PATH];
     if (!f) {
@@ -148,7 +149,7 @@ static int bore_append_solution_files(bore_t* b, const char* sln_path)
     }
 
     // There cannot be more than solutionLineCount files in the sln-files. The files are specified one on each row.
-    files = (u32*)bore_alloc(&b->file_alloc, sizeof(u32)*b->solutionLineCount);
+    files = (bore_file_t*)bore_alloc(&b->file_alloc, sizeof(bore_file_t)*b->solutionLineCount);
 
     while (0 == vim_fgets((char_u*)buf, sizeof(buf), f)) {
         if (state == 0) {
@@ -163,8 +164,11 @@ static int bore_append_solution_files(bore_t* b, const char* sln_path)
                     DWORD attr = 0;
                     *ends = 0;
                     if (FAIL != bore_canonicalize(&buf[2], fn, &attr)) {
-                        if (!(FILE_ATTRIBUTE_DIRECTORY & attr) && !bore_is_excluded_extension(vim_strrchr(fn, '.')))
-                            files[file_index++] = bore_strndup(b, fn, strlen(fn));
+                        if (!(FILE_ATTRIBUTE_DIRECTORY & attr) && !bore_is_excluded_extension(vim_strrchr(fn, '.'))) {
+                            files[file_index].file = bore_strndup(b, fn, strlen(fn));
+                            files[file_index].proj_index = 0; // TODO-pkack: add solution as first project?
+                            ++file_index;
+                        }
                     }
 
                 } else {
@@ -175,7 +179,7 @@ static int bore_append_solution_files(bore_t* b, const char* sln_path)
     }
 
     b->file_count += file_index;
-    bore_alloc_trim(&b->file_alloc, sizeof(u32)*(b->solutionLineCount - file_index));
+    bore_alloc_trim(&b->file_alloc, sizeof(bore_file_t)*(b->solutionLineCount - file_index));
 
     fclose(f);
 
@@ -184,11 +188,11 @@ done:
     return result;
 }
 
-static void bore_append_vcxproj_files(bore_t* b, node_t** result, int result_count,
+static void bore_append_vcxproj_files(bore_t* b, int proj_index, node_t** result, int result_count,
         char* filename_buf, char* filename_part, int path_part_len)
 {
     int i, file_index;
-    u32* files = (u32*)bore_alloc(&b->file_alloc, sizeof(u32)*result_count);
+    bore_file_t* files = (bore_file_t*)bore_alloc(&b->file_alloc, sizeof(bore_file_t)*result_count);
 
     for(i = 0, file_index = 0; i < result_count; ++i) {
         char buf[BORE_MAX_PATH];
@@ -210,15 +214,18 @@ static void bore_append_vcxproj_files(bore_t* b, node_t** result, int result_cou
         ext = vim_strrchr(filename_part, '.');
         skipFile = bore_is_excluded_extension(ext);
         if (!skipFile && FAIL != bore_canonicalize(fn, buf, &attr)) {
-            if (!(FILE_ATTRIBUTE_DIRECTORY & attr))
-                files[file_index++] = bore_strndup(b, buf, strlen(buf));
+            if (!(FILE_ATTRIBUTE_DIRECTORY & attr)) {
+                files[file_index].file = bore_strndup(b, buf, strlen(buf));
+                files[file_index].proj_index = proj_index;
+                ++file_index;
+            }
         }
     }
     b->file_count += file_index;
-    bore_alloc_trim(&b->file_alloc, sizeof(u32)*(result_count - file_index));
+    bore_alloc_trim(&b->file_alloc, sizeof(bore_file_t)*(result_count - file_index));
 }
 
-static void bore_load_vcxproj_filters(bore_t* b, const char* path)
+static void bore_load_vcxproj_filters(bore_t* b, int proj_index, const char* path)
 {
     node_t* root;
     node_t** result;
@@ -237,7 +244,7 @@ static void bore_load_vcxproj_filters(bore_t* b, const char* path)
 
     //result = roxml_xpath(root, "//ClInclude/@Include", &result_count);
     result = roxml_xpath(root, "//@Include", &result_count);
-    bore_append_vcxproj_files(b, result, result_count, filename_buf, filename_part, path_part_len);
+    bore_append_vcxproj_files(b, proj_index, result, result_count, filename_buf, filename_part, path_part_len);
     roxml_release(result);
 
     roxml_close(root);
@@ -298,7 +305,7 @@ static int bore_extract_files_from_projects(bore_t* b)
             //char path[BORE_MAX_PATH];
             //sprintf(path, "%s.filters", bore_str(b, proj[i].project_path));
             //bore_load_vcxproj_filters(b, path);
-            bore_load_vcxproj_filters(b, bore_str(b, proj[i].project_path));
+            bore_load_vcxproj_filters(b, i, bore_str(b, proj[i].project_path));
         }
     }
     return OK;
@@ -307,29 +314,45 @@ static int bore_extract_files_from_projects(bore_t* b)
 static int bore_sort_filename(void* ctx, const void* vx, const void* vy)
 {
     bore_t* b = (bore_t*)ctx;
-    u32 x = *(u32*)vx;
-    u32 y = *(u32*)vy;
-    return stricmp(bore_str(b, x), bore_str(b, y));
+    bore_file_t* x = (bore_file_t*)vx;
+    bore_file_t* y = (bore_file_t*)vy;
+    return stricmp(bore_str(b, x->file), bore_str(b, y->file));
+}
+
+static int bore_find_filename(void* ctx, const void* vx, const void* vy)
+{
+    bore_t* b = (bore_t*)ctx;
+    char* x = (char*)vx;
+    bore_file_t* y = (bore_file_t*)vy;
+    return stricmp(x, bore_str(b, y->file));
+}
+
+static int bore_sort_project_files(void* ctx, const void* vx, const void* vy)
+{
+    bore_t* b = (bore_t*)ctx;
+    bore_file_t* x = (bore_file_t*)vx;
+    bore_file_t* y = (bore_file_t*)vy;
+    return x->proj_index - y->proj_index;
 }
 
 static int bore_sort_and_cleanup_files(bore_t* b)
 {
-    u32* files = (u32*)b->file_alloc.base;
+    bore_file_t* files = (bore_file_t*)b->file_alloc.base;
 
     if (b->file_count == 0)
         return OK;
 
     // sort
-    qsort_s(files, b->file_count, sizeof(u32), bore_sort_filename, b);
+    qsort_s(files, b->file_count, sizeof(bore_file_t), bore_sort_filename, b);
 
     // uniq
     {
-        u32* pr = files + 1;
-        u32* pw = files + 1;
-        u32* pend = files + b->file_count;
+        bore_file_t* pr = files + 1;
+        bore_file_t* pw = files + 1;
+        bore_file_t* pend = files + b->file_count;
         int n;
         while(pr < pend) {
-            if (0 != stricmp(bore_str(b, *pr), bore_str(b, *(pr-1)))) {
+            if (0 != stricmp(bore_str(b, pr->file), bore_str(b, (pr-1)->file))) {
                 *pw++ = *pr++;
             } else {
                 ++pr;
@@ -338,21 +361,31 @@ static int bore_sort_and_cleanup_files(bore_t* b)
         n = pw - files;
 
         // resize file-array
-        bore_alloc_trim(&b->file_alloc, sizeof(u32)*(b->file_count - n));
+        bore_alloc_trim(&b->file_alloc, sizeof(bore_file_t)*(b->file_count - n));
         b->file_count = n;
     }
 
     return OK;
 }
 
+static int bore_build_project_files(bore_t* b)
+{
+    bore_file_t* files = (bore_file_t*)b->file_alloc.base;
+    bore_alloc(&b->file_proj_alloc, b->file_count * sizeof(bore_file_t));
+    bore_file_t* proj_files = (bore_file_t*)b->file_proj_alloc.base;
+    memcpy(proj_files, files, b->file_count * sizeof(bore_file_t));
+    qsort_s(proj_files, b->file_count, sizeof(bore_file_t), bore_sort_project_files, b);
+    return OK;
+}
+
 static int bore_build_extension_list(bore_t* b)
 {
-    u32* files = (u32*)b->file_alloc.base;
+    bore_file_t* files = (bore_file_t*)b->file_alloc.base;
     bore_alloc(&b->file_ext_alloc, b->file_count * sizeof(u32));
     u32* ext_hash = (u32*)b->file_ext_alloc.base;
     u32 i;
     for (i = 0; i < (u32)b->file_count; ++i) {
-        char* path = bore_str(b, files[i]);
+        char* path = bore_str(b, files[i].file);
         u32 path_len = (u32)strlen(path);
         char* ext = vim_strrchr(path, '.');
 
@@ -376,7 +409,7 @@ static int bore_sort_toggle_entry(const void* vx, const void* vy)
 
 static int bore_build_toggle_index(bore_t* b)
 {
-    u32* files = (u32*)b->file_alloc.base;
+    bore_file_t* files = (bore_file_t*)b->file_alloc.base;
     u32 i;
     u32 seq[] = {
         bore_string_hash("cpp"),
@@ -393,7 +426,7 @@ static int bore_build_toggle_index(bore_t* b)
     bore_prealloc(&b->toggle_index_alloc, b->file_count * sizeof(bore_toggle_entry_t));
     b->toggle_entry_count = 0;
     for (i = 0; i < (u32)b->file_count; ++i) {
-        char* path = bore_str(b, files[i]);
+        char* path = bore_str(b, files[i].file);
         u32 path_len = (u32)strlen(path);
         char* ext = vim_strrchr(path, '.');
         char* basename = vim_strrchr(path, '\\');
@@ -444,7 +477,7 @@ static int bore_write_filelist_to_tempfile(bore_t* b)
     slndir = bore_str(b, b->sln_dir);
     slndirlen = strlen(slndir);
     for(i = 0; i < b->file_count; ++i) {
-        const char *fn = bore_str(b, ((u32*)b->file_alloc.base)[i]);
+        const char *fn = bore_str(b, ((bore_file_t*)b->file_alloc.base)[i].file);
         if (strncmp(fn, slndir, slndirlen) == 0)
             fprintf(f, "%s\n", fn + slndirlen);
         else
@@ -483,7 +516,7 @@ static void bore_load_sln(const char* path)
     g_bore = 0;
 
     bore_prealloc(&b->data_alloc, 8*1024*1024);
-    bore_prealloc(&b->file_alloc, sizeof(u32)*64*1024);
+    bore_prealloc(&b->file_alloc, sizeof(bore_file_t)*64*1024);
     bore_prealloc(&b->proj_alloc, sizeof(bore_proj_t)*256);
 
     for (i = 0; i < BORE_SEARCH_JOBS; ++i) {
@@ -548,6 +581,11 @@ static void bore_load_sln(const char* path)
     BORE_VIMPROFILE_STOP("bore_sort_and_cleanup_files");
 
     BORE_VIMPROFILE_START;
+    if (FAIL == bore_build_project_files(b))
+        goto fail;
+    BORE_VIMPROFILE_STOP("bore_build_project_files");
+
+    BORE_VIMPROFILE_START;
     if (FAIL == bore_build_extension_list(b))
         goto fail;
     BORE_VIMPROFILE_STOP("bore_build_extension_list");
@@ -564,6 +602,8 @@ static void bore_load_sln(const char* path)
 
     sprintf(buf, "let g:bore_base_dir=\'%s\'", bore_str(b, b->sln_dir));
     do_cmdline_cmd(buf);
+
+    do_cmdline_cmd("let g:bore_proj_path=''");
 
     sprintf(buf, "let g:bore_filelist_file=\'%s\'", b->filelist_tmp_file);
     do_cmdline_cmd(buf);
@@ -659,7 +699,7 @@ static void bore_save_match_to_file(bore_t* b, FILE* cf, const bore_match_t* mat
     int slndirlen = strlen(slndir);
     int i;
     for (i = 0; i < match_count; ++i, ++match) {
-        const char* fn = bore_str(b, ((u32*)(b->file_alloc.base))[match->file_index]);
+        const char* fn = bore_str(b, ((bore_file_t*)(b->file_alloc.base))[match->file_index].file);
         if (strncmp(fn, slndir, slndirlen) == 0)
             fn += slndirlen;
         fprintf(cf, "%s:%d:%d:%s\n", fn, match->row, match->column + 1, match->line);
@@ -669,7 +709,7 @@ static void bore_save_match_to_file(bore_t* b, FILE* cf, const bore_match_t* mat
 static int bore_find(bore_t* b, char* what, char* what_ext)
 {
     enum { MaxMatch = 1000 };
-    u32* files = (u32*)b->file_alloc.base;
+    bore_file_t* files = (bore_file_t*)b->file_alloc.base;
     int found = 0;
     char_u *tmp = vim_tempname('f');
     FILE* cf = 0;
@@ -1158,6 +1198,58 @@ edit:
     }
 }
 
+bore_proj_t* bore_find_project(char* fn)
+{
+    char path[BORE_MAX_PATH];
+    bore_proj_t* projects = (bore_proj_t*)g_bore->proj_alloc.base;
+
+    if (FAIL == bore_canonicalize(fn, path, 0))
+        return NULL;
+
+    bore_file_t* file = (bore_file_t*)bsearch_s( 
+        path,
+        g_bore->file_alloc.base,
+        g_bore->file_count,
+        sizeof(bore_file_t),
+        bore_find_filename,
+        g_bore);
+
+    if (NULL == file)
+        return NULL;
+
+    return projects + file->proj_index;
+}
+
+void ex_boreproj __ARGS((exarg_T *eap))
+{
+    if (!g_bore) {
+        EMSG(_("Load a solution first with boresln"));
+    } else if (*eap->arg == NUL) {
+        do_cmdline_cmd("let g:bore_proj_path");
+    } else {
+        char buf[BORE_MAX_PATH];
+        char mess[100];
+
+        bore_proj_t* proj = bore_find_project(eap->arg);
+        if (NULL != proj) {
+            const char *slndir = bore_str(g_bore, g_bore->sln_dir);
+            int slndirlen = strlen(slndir);
+            char *fn = bore_str(g_bore, proj->project_path);
+            if (strncmp(fn, slndir, slndirlen) == 0)
+                fn += slndirlen;
+
+            sprintf(buf, "let g:bore_proj_path=\'%s\'", fn);
+            do_cmdline_cmd(buf);
+            vim_snprintf(mess, 100, "Project found: %s", bore_str(g_bore, proj->project_name));
+            MSG(_(mess));
+        }
+        else {
+            do_cmdline_cmd("let g:bore_proj_path=''");
+            EMSG(_("No project found"));
+        }
+    }
+}
+
 void ex_boretoggle __ARGS((exarg_T *eap))
 {
     if (!g_bore)
@@ -1203,7 +1295,7 @@ void ex_boretoggle __ARGS((exarg_T *eap))
 
         // Find the entry of this buffer's file
         for (; e != e_end && e->basename_hash == basename_hash; ++e)
-            if (0 == stricmp(bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e->fileindex]) , path))
+            if (0 == stricmp(bore_str(g_bore, ((bore_file_t*)(g_bore->file_alloc.base))[e->fileindex].file), path))
                 break;
 
         if (e == e_end || e->basename_hash != basename_hash)
@@ -1224,11 +1316,11 @@ void ex_boretoggle __ARGS((exarg_T *eap))
 
         // Find the best matching ext
         e_best = e;
-        e_best_score = bore_toggle_entry_score(path, bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e->fileindex]));
+        e_best_score = bore_toggle_entry_score(path, bore_str(g_bore, ((bore_file_t*)(g_bore->file_alloc.base))[e->fileindex].file));
         ++e;
         for(; e != e_end && e_best->extension_index == e->extension_index; ++e)
         {
-            int score = bore_toggle_entry_score(path, bore_str(g_bore, ((u32*)(g_bore->file_alloc.base))[e->fileindex]));
+            int score = bore_toggle_entry_score(path, bore_str(g_bore, ((bore_file_t*)(g_bore->file_alloc.base))[e->fileindex].file));
             if (score > e_best_score) {
                 e_best_score = score;
                 e_best = e;
@@ -1238,7 +1330,7 @@ void ex_boretoggle __ARGS((exarg_T *eap))
         {
             const char *slndir = bore_str(g_bore, g_bore->sln_dir);
             int slndirlen = strlen(slndir);
-            char *fn = bore_str(g_bore, ((u32*)g_bore->file_alloc.base)[e_best->fileindex]);
+            char *fn = bore_str(g_bore, ((bore_file_t*)g_bore->file_alloc.base)[e_best->fileindex].file);
             if (strncmp(fn, slndir, slndirlen) == 0)
                 fn += slndirlen;
             bore_open_file_buffer(fn);

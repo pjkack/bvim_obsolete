@@ -53,6 +53,11 @@ typedef struct __declspec(align(BORE_CACHELINE)) bore_search_result_t {
     bore_match_t result[BORE_MAXMATCHPERFILE];  
 } bore_search_result_t;
 
+typedef struct bore_file_t {
+    u32 file;
+    u32 proj_index;
+} bore_file_t;
+
 typedef struct bore_toggle_entry_t {
     u32 basename_hash;
     u32 extension_hash;
@@ -74,8 +79,9 @@ typedef struct bore_t {
 
     // array of files in the solution
     int file_count;
-    bore_alloc_t file_alloc;     // filename string pointers
-    bore_alloc_t file_ext_alloc; // filename extension hashes
+    bore_alloc_t file_alloc;      // array of bore_file_t sorted by file name
+    bore_alloc_t file_proj_alloc; // array of bore_file_t sorted by project index
+    bore_alloc_t file_ext_alloc;  // array of extension hashes
 
     // array of bore_toggle_entry_t;
     int toggle_entry_count;
