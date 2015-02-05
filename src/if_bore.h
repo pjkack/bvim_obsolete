@@ -60,7 +60,6 @@ typedef struct bore_file_t {
 
 typedef struct bore_toggle_entry_t {
     u32 basename_hash;
-    u32 extension_hash;
     int extension_index;
     u32 file;
 } bore_toggle_entry_t;

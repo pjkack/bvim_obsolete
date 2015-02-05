@@ -450,7 +450,6 @@ static int bore_build_toggle_index(bore_t* b)
         bore_toggle_entry_t* e = (bore_toggle_entry_t*)bore_alloc(&b->toggle_index_alloc, 
             sizeof(bore_toggle_entry_t));
         e->file = files[i].file;
-        e->extension_hash = file_ext[i];
         e->extension_index = ext_index;
         e->basename_hash = bore_string_hash_n(basename, (int)(ext - basename));
         b->toggle_entry_count++;
