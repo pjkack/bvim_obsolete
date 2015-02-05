@@ -266,6 +266,15 @@ skip:
     BORE_CVDEINITSPAN;
 }
 
+static int bore_is_excluded_search_file(const char* fn)
+{
+    if (fn) {
+        if (0 != strstr(fn, "__Generated__"))
+            return 1;
+    }
+    return 0;
+}
+
 static DWORD WINAPI search_worker(struct search_context_t* search_context)
 {
     for (;;)
@@ -289,8 +298,12 @@ static DWORD WINAPI search_worker(struct search_context_t* search_context)
                 continue;
         }
 
-        u32* const files = (u32*)search_context->b->file_alloc.base;
-        search_one_file(search_context, bore_str(search_context->b, files[file_index]), file_index);
+        bore_file_t* const files = (bore_file_t*)search_context->b->file_alloc.base;
+
+        if (bore_is_excluded_search_file(bore_str(search_context->b, files[file_index].file)))
+            continue;
+
+        search_one_file(search_context, bore_str(search_context->b, files[file_index].file), file_index);
 
         if (search_context->was_truncated > 1)
             break;
@@ -311,7 +324,6 @@ int bore_dofind(bore_t* b, int thread_count, int* truncated_, bore_match_t* matc
     }
 #endif  
 
-    u32* const files = (u32*)b->file_alloc.base;
     LONG file_count = b->file_count;
     *truncated_ = 0;    
 
