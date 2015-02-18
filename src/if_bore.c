@@ -123,14 +123,17 @@ static u32 bore_strndup(bore_t* b, const char* s, int len)
     return p - (char*)b->data_alloc.base;
 }
 
-static int bore_is_excluded_extension(const char* ext)
+static int bore_is_excluded_file(const char* path, const char* ext)
 {
     // TODO-jkjellstrom: Use extension hash when supported?
     if (ext)
     {
-        if (0 == stricmp(ext, ".dll") || 0 == stricmp(ext, ".vcxproj") || 0 == stricmp(ext, ".exe"))
+        if (0 == STRICMP((char*)ext, ".dll") || 0 == STRICMP((char*)ext, ".vcxproj") || 0 == STRICMP((char*)ext, ".exe"))
             return 1;
     }
+
+	if (strstr(path, "\\__Generated"))
+		return 1;
 
     return 0;
 }
@@ -164,7 +167,7 @@ static int bore_append_solution_files(bore_t* b, const char* sln_path)
                     DWORD attr = 0;
                     *ends = 0;
                     if (FAIL != bore_canonicalize(&buf[2], fn, &attr)) {
-                        if (!(FILE_ATTRIBUTE_DIRECTORY & attr) && !bore_is_excluded_extension(vim_strrchr(fn, '.'))) {
+                        if (!(FILE_ATTRIBUTE_DIRECTORY & attr) && !bore_is_excluded_file(fn, vim_strrchr(fn, '.'))) {
                             files[file_index].file = bore_strndup(b, fn, strlen(fn));
                             files[file_index].proj_index = 0; // TODO-pkack: add solution as first project?
                             ++file_index;
@@ -212,7 +215,7 @@ static void bore_append_vcxproj_files(bore_t* b, int proj_index, node_t** result
         fn = (strlen(filename_part) >=2 && filename_part[1] == ':') ? filename_part : filename_buf;
 
         ext = vim_strrchr(filename_part, '.');
-        skipFile = bore_is_excluded_extension(ext);
+        skipFile = bore_is_excluded_file(fn, ext);
         if (!skipFile && FAIL != bore_canonicalize(fn, buf, &attr)) {
             if (!(FILE_ATTRIBUTE_DIRECTORY & attr)) {
                 files[file_index].file = bore_strndup(b, buf, strlen(buf));
@@ -316,7 +319,7 @@ static int bore_sort_filename(void* ctx, const void* vx, const void* vy)
     bore_t* b = (bore_t*)ctx;
     bore_file_t* x = (bore_file_t*)vx;
     bore_file_t* y = (bore_file_t*)vy;
-    return stricmp(bore_str(b, x->file), bore_str(b, y->file));
+    return STRICMP(bore_str(b, x->file), bore_str(b, y->file));
 }
 
 static int bore_find_filename(void* ctx, const void* vx, const void* vy)
@@ -324,7 +327,7 @@ static int bore_find_filename(void* ctx, const void* vx, const void* vy)
     bore_t* b = (bore_t*)ctx;
     char* x = (char*)vx;
     bore_file_t* y = (bore_file_t*)vy;
-    return stricmp(x, bore_str(b, y->file));
+    return STRICMP(x, bore_str(b, y->file));
 }
 
 static int bore_sort_project_files(void* ctx, const void* vx, const void* vy)
@@ -352,7 +355,7 @@ static int bore_sort_and_cleanup_files(bore_t* b)
         bore_file_t* pend = files + b->file_count;
         int n;
         while(pr < pend) {
-            if (0 != stricmp(bore_str(b, pr->file), bore_str(b, (pr-1)->file))) {
+            if (0 != STRICMP(bore_str(b, pr->file), bore_str(b, (pr-1)->file))) {
                 *pw++ = *pr++;
             } else {
                 ++pr;
@@ -464,7 +467,7 @@ static int bore_write_filelist_to_tempfile(bore_t* b)
 {
     FILE* f;
     int i;
-    const char *slndir;
+    char *slndir;
     int slndirlen;
     b->filelist_tmp_file = vim_tempname('b');
     if (!b->filelist_tmp_file)
@@ -475,8 +478,8 @@ static int bore_write_filelist_to_tempfile(bore_t* b)
     slndir = bore_str(b, b->sln_dir);
     slndirlen = strlen(slndir);
     for(i = 0; i < b->file_count; ++i) {
-        const char *fn = bore_str(b, ((bore_file_t*)b->file_alloc.base)[i].file);
-        if (strncmp(fn, slndir, slndirlen) == 0)
+        char *fn = bore_str(b, ((bore_file_t*)b->file_alloc.base)[i].file);
+        if (STRNICMP(fn, slndir, slndirlen) == 0)
             fprintf(f, "%s\n", fn + slndirlen);
         else
             fprintf(f, "%s\n", fn);
@@ -540,7 +543,7 @@ static void bore_load_sln(const char* path)
             // code paths start one level up from that
             while (--pc > sln_dir_str) {
                 if (*pc == '\\') {
-                    if (stricmp(pc, "\\Local\\") == 0) {
+                    if (STRICMP(pc, "\\Local\\") == 0) {
                         pc[1] = 0; // Keep trailing backslash
                     }
                     break;
@@ -693,12 +696,12 @@ static void bore_display_search_result(bore_t* b, const char* filename, char* wh
 
 static void bore_save_match_to_file(bore_t* b, FILE* cf, const bore_match_t* match, int match_count)
 {
-    const char *slndir = bore_str(b, b->sln_dir);
+    char *slndir = bore_str(b, b->sln_dir);
     int slndirlen = strlen(slndir);
     int i;
     for (i = 0; i < match_count; ++i, ++match) {
-        const char* fn = bore_str(b, ((bore_file_t*)(b->file_alloc.base))[match->file_index].file);
-        if (strncmp(fn, slndir, slndirlen) == 0)
+        char* fn = bore_str(b, ((bore_file_t*)(b->file_alloc.base))[match->file_index].file);
+        if (STRNICMP(fn, slndir, slndirlen) == 0)
             fn += slndirlen;
         fprintf(cf, "%s:%d:%d:%s\n", fn, match->row, match->column + 1, match->line);
     }
@@ -1230,10 +1233,10 @@ void ex_boreproj __ARGS((exarg_T *eap))
 
         bore_proj_t* proj = bore_find_project(eap->arg);
         if (NULL != proj) {
-            const char *slndir = bore_str(g_bore, g_bore->sln_dir);
+            char *slndir = bore_str(g_bore, g_bore->sln_dir);
             int slndirlen = strlen(slndir);
             char *fn = bore_str(g_bore, proj->project_path);
-            if (strncmp(fn, slndir, slndirlen) == 0)
+            if (STRNICMP(fn, slndir, slndirlen) == 0)
                 fn += slndirlen;
 
             sprintf(buf, "let g:bore_proj_path=\'%s\'", fn);
@@ -1298,7 +1301,7 @@ void ex_boretoggle __ARGS((exarg_T *eap))
 
         // Find the entry of this buffer's file
         for (; e != e_end && e->basename_hash == basename_hash; ++e)
-            if (0 == stricmp(bore_str(g_bore, e->file), path))
+            if (0 == STRICMP(bore_str(g_bore, e->file), path))
                 break;
 
         if (e == e_end || e->basename_hash != basename_hash)
@@ -1331,10 +1334,10 @@ void ex_boretoggle __ARGS((exarg_T *eap))
         }
 
         {
-            const char *slndir = bore_str(g_bore, g_bore->sln_dir);
+            char *slndir = bore_str(g_bore, g_bore->sln_dir);
             int slndirlen = strlen(slndir);
             char *fn = bore_str(g_bore, e_best->file);
-            if (strncmp(fn, slndir, slndirlen) == 0)
+            if (STRNICMP(fn, slndir, slndirlen) == 0)
                 fn += slndirlen;
             bore_open_file_buffer(fn);
         }
