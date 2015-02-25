@@ -1156,6 +1156,7 @@ void ex_boreopen __ARGS((exarg_T *eap))
         EMSG(_("Load a solution first with boresln"));
     else {
         const char* mappings[] = {
+            "q <C-w>q<CR>", 
             "<CR> :ZZBoreopenselection<CR>", 
             "<2-LeftMouse> :ZZBoreopenselection<CR>",
             0};
