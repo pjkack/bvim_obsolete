@@ -41,6 +41,7 @@ typedef struct bore_match_t {
 
 typedef struct bore_ini_t {
     int borebuf_height; // Default height of borebuf window
+    int cpu_cores; // Max number of cpu cores to be used
 } bore_ini_t;
 
 typedef struct __declspec(align(BORE_CACHELINE)) bore_search_job_t {
