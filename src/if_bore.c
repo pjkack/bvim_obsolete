@@ -490,6 +490,9 @@ static int bore_write_filelist_to_tempfile(bore_t* b)
 
 static void bore_load_ini(bore_ini_t* ini, const char* dirpath)
 {
+    SYSTEM_INFO sys_info;
+    GetSystemInfo(&sys_info);
+    ini->cpu_cores = (int)sys_info.dwNumberOfProcessors;
     ini->borebuf_height = 30;
 }
 
@@ -1156,6 +1159,7 @@ void ex_boreopen __ARGS((exarg_T *eap))
         EMSG(_("Load a solution first with boresln"));
     else {
         const char* mappings[] = {
+            "q <C-w>q<CR>", 
             "<CR> :ZZBoreopenselection<CR>", 
             "<2-LeftMouse> :ZZBoreopenselection<CR>",
             0};
@@ -1349,8 +1353,66 @@ void ex_borebuild __ARGS((exarg_T *eap))
     if (!g_bore) {
         EMSG(_("Load a solution first with boresln"));
     } else {
-        //bore_async_execute("dir");
-        bore_async_execute("msbuild.exe /nologo vim_vs2010.vcxproj /t:Build /p:Configuration=Debug;Platform=Win32 /verbosity:minimal");
+        char cmd[1024];
+        char* proj_file = NULL;
+        char* src_file = NULL;
+        char* target = eap->forceit ? "rebuild" : "build";
+        char* platform = strstr(bore_str(g_bore, g_bore->sln_path), "vim_vs2010") != 0 ? "Win32" : "x64";
+        char* configuration = "Release";
+        char* slndir = bore_str(g_bore, g_bore->sln_dir);
+        int slndirlen = strlen(slndir);
+
+        if (eap->cmdidx == CMD_borebuildsln) {
+            proj_file = bore_str(g_bore, g_bore->sln_path);
+        }
+        else {
+            if (NULL == eap->arg || '\0' == eap->arg[0])
+                src_file = curbuf->b_fname;
+            else if (eap->cmdidx == CMD_borebuildproj)
+                proj_file = eap->arg;
+            else if (eap->cmdidx == CMD_borebuildfile)
+                src_file = eap->arg;
+
+            if (NULL == proj_file || '\0' == proj_file[0]) {
+                if (NULL == src_file || '\0' == src_file) {
+                    EMSG(_("No file specified, and no current buffer"));
+                    return;
+                }
+                bore_proj_t* proj = bore_find_project(src_file);
+                if (NULL == proj) {
+                    EMSG(_("Could not find project for current buffer"));
+                    return;
+                }
+                proj_file = bore_str(g_bore, proj->project_path);
+            }
+        }
+
+        if (STRNICMP(proj_file, slndir, slndirlen) == 0)
+            proj_file += slndirlen;
+
+        if (eap->cmdidx == CMD_borebuildfile) {
+
+            if (STRNICMP(src_file, slndir, slndirlen) == 0)
+                src_file += slndirlen;
+
+            vim_snprintf(cmd, 1024,
+                "msbuild.exe %s /t:ClCompile /p:SelectedFiles=\"%s\" /p:Platform=%s /p:Configuration=%s " \
+                "/p:BuildProjectReferences=true " \
+                "/m:%d /p:MultiProcessorCompilation=true;CL_MPCount=%d /v:q /nologo",
+                proj_file, src_file, platform, configuration,
+                g_bore->ini.cpu_cores, g_bore->ini.cpu_cores);
+        }
+        else
+        {
+            vim_snprintf(cmd, 1024,
+                "msbuild.exe %s /t:%s /p:Platform=%s /p:Configuration=%s " \
+                "/p:BuildProjectReferences=true " \
+                "/m:%d /p:MultiProcessorCompilation=true;CL_MPCount=%d /v:q /nologo",
+                proj_file, target, platform, configuration,
+                g_bore->ini.cpu_cores, g_bore->ini.cpu_cores);
+        }
+        MSG(_(cmd));
+        bore_async_execute(cmd);
     }
 }
 
