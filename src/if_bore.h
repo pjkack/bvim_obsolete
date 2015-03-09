@@ -21,8 +21,10 @@ typedef struct bore_alloc_t {
 } bore_alloc_t;
 
 typedef struct bore_proj_t {
-    u32 project_name;
-    u32 project_path;
+    u32 project_sln_name;
+    u32 project_sln_guid;
+    u32 project_sln_path;
+    u32 project_file_path;
 } bore_proj_t;
 
 typedef struct bore_search_t {
@@ -68,8 +70,6 @@ typedef struct bore_toggle_entry_t {
 typedef struct bore_t {
     u32 sln_path; // abs path of solution
     u32 sln_dir;  // abs dir of solution
-
-    int solutionLineCount; // number of lines in the solution file
 
     char* filelist_tmp_file; // name of temporary filelist file
 

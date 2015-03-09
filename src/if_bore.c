@@ -123,72 +123,20 @@ static u32 bore_strndup(bore_t* b, const char* s, int len)
     return p - (char*)b->data_alloc.base;
 }
 
-static int bore_is_excluded_file(const char* path, const char* ext)
+static int bore_is_excluded_file(const char* path)
 {
     // TODO-jkjellstrom: Use extension hash when supported?
+    const char* ext = (char*)vim_strrchr((char_u*)path, '.');
     if (ext)
     {
         if (0 == STRICMP((char*)ext, ".dll") || 0 == STRICMP((char*)ext, ".vcxproj") || 0 == STRICMP((char*)ext, ".exe"))
             return 1;
     }
 
-	if (strstr(path, "\\__Generated"))
-		return 1;
+    if (strstr(path, "\\__Generated"))
+        return 1;
 
     return 0;
-}
-
-static int bore_append_solution_files(bore_t* b, const char* sln_path)
-{
-    int result = FAIL;
-    FILE* f = fopen(sln_path, "rb");
-    int file_index = 0;
-    int state = 0;
-    bore_file_t* files = 0;
-    char buf[BORE_MAX_PATH];
-    char fn[BORE_MAX_PATH];
-    if (!f) {
-        goto done;
-    }
-
-    // There cannot be more than solutionLineCount files in the sln-files. The files are specified one on each row.
-    files = (bore_file_t*)bore_alloc(&b->file_alloc, sizeof(bore_file_t)*b->solutionLineCount);
-
-    while (0 == vim_fgets((char_u*)buf, sizeof(buf), f)) {
-        if (state == 0) {
-            if (strstr(buf, "ProjectSection(SolutionItems) = preProject"))
-                state = 1;
-        } else {
-            if (strstr(buf, "EndProjectSection")) {
-                state = 0;
-            } else {
-                char* ends = strstr(buf, " = ");
-                if (ends) {
-                    DWORD attr = 0;
-                    *ends = 0;
-                    if (FAIL != bore_canonicalize(&buf[2], fn, &attr)) {
-                        if (!(FILE_ATTRIBUTE_DIRECTORY & attr) && !bore_is_excluded_file(fn, vim_strrchr(fn, '.'))) {
-                            files[file_index].file = bore_strndup(b, fn, strlen(fn));
-                            files[file_index].proj_index = 0; // TODO-pkack: add solution as first project?
-                            ++file_index;
-                        }
-                    }
-
-                } else {
-                    state = 0;
-                }
-            }
-        }
-    }
-
-    b->file_count += file_index;
-    bore_alloc_trim(&b->file_alloc, sizeof(bore_file_t)*(b->solutionLineCount - file_index));
-
-    fclose(f);
-
-    result = OK;
-done:
-    return result;
 }
 
 static void bore_append_vcxproj_files(bore_t* b, int proj_index, node_t** result, int result_count,
@@ -202,7 +150,6 @@ static void bore_append_vcxproj_files(bore_t* b, int proj_index, node_t** result
         const char* fn;
         DWORD attr;
         int len;
-        const char* ext;
         int skipFile = 0;
 
         roxml_get_content(result[i], filename_part, BORE_MAX_PATH - path_part_len, 0);
@@ -214,8 +161,7 @@ static void bore_append_vcxproj_files(bore_t* b, int proj_index, node_t** result
         }
         fn = (strlen(filename_part) >=2 && filename_part[1] == ':') ? filename_part : filename_buf;
 
-        ext = vim_strrchr(filename_part, '.');
-        skipFile = bore_is_excluded_file(fn, ext);
+        skipFile = bore_is_excluded_file(fn);
         if (!skipFile && FAIL != bore_canonicalize(fn, buf, &attr)) {
             if (!(FILE_ATTRIBUTE_DIRECTORY & attr)) {
                 files[file_index].file = bore_strndup(b, buf, strlen(buf));
@@ -254,43 +200,153 @@ static void bore_load_vcxproj_filters(bore_t* b, int proj_index, const char* pat
 
 }
 
-static int bore_extract_projects_from_sln(bore_t* b, const char* sln_path)
+typedef struct bore_guid_map_t {
+    char child[36];
+    char parent[36];
+} bore_guid_map_t;
+
+static int bore_extract_projects_and_files_from_sln(bore_t* b, const char* sln_path)
 {
     regmatch_T regmatch;
     FILE* f;
     char buf[BORE_MAX_PATH];
     char buf2[BORE_MAX_PATH];
     int result = FAIL;
+    int state = 0;
     int sln_dir_len = (char*)vim_strrchr((char_u*)sln_path, '\\') - sln_path + 1;
 
-    regmatch.regprog = vim_regcomp((char_u*)"^Project(\"{.\\{-}}\") = \"\\(.\\{-}\\)\", \"\\(.\\{-}\\)\"", RE_MAGIC + RE_STRING);
+    regmatch.regprog = vim_regcomp((char_u*)"^Project(\"{.\\{-}}\") = \"\\(.\\{-}\\)\", \"\\(.\\{-}\\)\", \"{\\(.\\{-}\\)}\"", RE_MAGIC + RE_STRING);
     regmatch.rm_ic = 0;
 
     f = fopen(sln_path, "rb");
     if (!f) {
         goto done;
     }
+    
+    int guid_map_count = 0;
+    bore_alloc_t guid_map_alloc;
+    bore_prealloc(&guid_map_alloc, 256*(sizeof(bore_guid_map_t)));
 
-    b->solutionLineCount = 0;
     while (0 == vim_fgets((char_u*)buf, sizeof(buf), f)) {
-        b->solutionLineCount++;
-        if (vim_regexec_nl(&regmatch, buf, (colnr_T)0)) {
-            bore_proj_t* proj = (bore_proj_t*)bore_alloc(&b->proj_alloc, sizeof(bore_proj_t));
-            ++b->proj_count;
-            proj->project_name = bore_strndup(b, regmatch.startp[1], regmatch.endp[1] - regmatch.startp[1]);
+        if (state == 0) {
+            if ('\t' == buf[0] || ' ' == buf[0]) {
+                if (strstr(buf, "GlobalSection(NestedProjects) = preSolution")) {
+                    state = 2;
+                }
+            }
+            else if (vim_regexec_nl(&regmatch, buf, (colnr_T)0)) {
+                state = 1;
+                bore_proj_t* proj = (bore_proj_t*)bore_alloc(&b->proj_alloc, sizeof(bore_proj_t));
+                ++b->proj_count;
+                proj->project_sln_name = bore_strndup(b, regmatch.startp[1], regmatch.endp[1] - regmatch.startp[1]);
+                proj->project_sln_guid = bore_strndup(b, regmatch.startp[3], regmatch.endp[3] - regmatch.startp[3]);
+                proj->project_sln_path = 0;
 
-            vim_strncpy(buf2, (char*)sln_path, sln_dir_len);
-            vim_strncpy(buf2 + sln_dir_len, regmatch.startp[2], regmatch.endp[2] - regmatch.startp[2]);
+                if (0 == STRNCMP(regmatch.startp[1], regmatch.startp[2], regmatch.endp[2] - regmatch.startp[2])) {
+                    proj->project_file_path = 0; // project is only a solution filter
+                }
+                else {
+                    // TODO-pkack: string hack required since bore_canonicalize use cd which has "\local" stripped
+                    vim_strncpy(buf2, (char*)sln_path, sln_dir_len);
+                    vim_strncpy(buf2 + sln_dir_len, regmatch.startp[2], regmatch.endp[2] - regmatch.startp[2]);
+                    if (FAIL != bore_canonicalize(buf2, buf, 0))
+                        proj->project_file_path = bore_strndup(b, buf, strlen(buf));
+                    else
+                        proj->project_file_path = 0;
+                }
 
-            if (FAIL != bore_canonicalize(buf2, buf, 0))
-                proj->project_path = bore_strndup(b, buf, strlen(buf));
-            else
-                proj->project_path = 0;
+                // TODO-pkack: copy and modify string in one step
+                // msbuild expects all '.' in project names to be changed to '_'
+                char* c = bore_str(b, proj->project_sln_name);
+                for (; c && 0 != *c; ++c) {
+                    if ('.' == *c)
+                        *c = '_';
+                }
+            }
+        }
+        else if (state == 1) {
+            if (strstr(buf, "ProjectSection(SolutionItems) = preProject")) {
+                // skip
+            }
+            else if (strstr(buf, "EndProjectSection")) {
+                state = 0;
+            } else {
+                char* ends = strstr(buf, " = ");
+                if (ends) {
+                    DWORD attr = 0;
+                    int skipFile = 0;
+
+                    *ends = 0;
+                    skipFile = bore_is_excluded_file(buf);
+                    if (!skipFile) {
+                        // TODO-pkack: string hack required since bore_canonicalize use cd which has "\local" stripped
+                        vim_strncpy(buf2, (char*)sln_path, sln_dir_len);
+                        strcpy(buf2 + sln_dir_len, &buf[2]);
+                        if (FAIL != bore_canonicalize(buf2, buf, &attr)) {
+                            if (!(FILE_ATTRIBUTE_DIRECTORY & attr)) {
+                                bore_file_t* files = (bore_file_t*)bore_alloc(&b->file_alloc, sizeof(bore_file_t));
+                                files->file = bore_strndup(b, buf, strlen(buf));
+                                files->proj_index = b->proj_count - 1;
+                                ++b->file_count;
+                            }
+                        }
+                    }
+                }
+                else {
+                    state = 0;
+                }
+            }
+        }
+        else if (state == 2) {
+            if (strstr(buf, "EndGlobalSection")) {
+                state = 0;
+            }
+            else {
+                char* ends = strstr(buf, "} = {");
+                if (ends) {
+                    *ends = 0;
+                    int len = strlen(buf + 3); // "\t\t{"
+                    bore_guid_map_t* proj_guid = (bore_guid_map_t*)bore_alloc(&guid_map_alloc, sizeof(bore_guid_map_t));
+                    ++guid_map_count;
+                    memcpy(proj_guid->child, buf + 3, len < 36 ? len : 36);
+                    len = strlen(ends + 5);
+                    memcpy(proj_guid->parent, ends + 5, len < 36 ? len : 36);
+                }
+                else {
+                    state = 0;
+                }
+            }
+        }
+    }
+
+    // TODO-pkack: Optimize this experimental project filter lookup code
+    {
+        bore_proj_t* proj = (bore_proj_t*)b->proj_alloc.base;
+        bore_guid_map_t* guid_map = (bore_guid_map_t*)guid_map_alloc.base;
+        int i, j, k;
+
+        for (i = 0; i < b->proj_count; ++i) {
+            if (0 == proj[i].project_sln_path) {
+                for (j = 0; j < guid_map_count; ++j) {
+                    if (0 == STRNCMP(bore_str(b, proj[i].project_sln_guid), guid_map[j].child, 36)) {
+                        for (k = 0; k < b->proj_count; ++k) {
+                            if (0 == STRNCMP(guid_map[j].parent, bore_str(b, proj[k].project_sln_guid), 36)) {
+                                int len = strlen(bore_str(b, proj[k].project_sln_name));
+                                vim_strncpy(buf, bore_str(b, proj[k].project_sln_name), len);
+                                buf[len] = '\\';
+                                strcpy(buf + len + 1, bore_str(b, proj[i].project_sln_name));
+                                proj[i].project_sln_name = bore_strndup(b, buf, strlen(buf));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     fclose(f);
     vim_free(regmatch.regprog);
+    bore_alloc_free(&guid_map_alloc);
 
     result = OK;
 
@@ -304,11 +360,11 @@ static int bore_extract_files_from_projects(bore_t* b)
     int i;
 
     for (i = 0; i < b->proj_count; ++i) {
-        if (proj[i].project_path) {
+        if (proj[i].project_file_path) {
             //char path[BORE_MAX_PATH];
-            //sprintf(path, "%s.filters", bore_str(b, proj[i].project_path));
+            //sprintf(path, "%s.filters", bore_str(b, proj[i].project_file_path));
             //bore_load_vcxproj_filters(b, path);
-            bore_load_vcxproj_filters(b, i, bore_str(b, proj[i].project_path));
+            bore_load_vcxproj_filters(b, i, bore_str(b, proj[i].project_file_path));
         }
     }
     return OK;
@@ -565,14 +621,9 @@ static void bore_load_sln(const char* path)
     BORE_VIMPROFILE_INIT;
 
     BORE_VIMPROFILE_START;
-    if (FAIL == bore_extract_projects_from_sln(b, bore_str(b, b->sln_path)))
+    if (FAIL == bore_extract_projects_and_files_from_sln(b, bore_str(b, b->sln_path)))
         goto fail;
-    BORE_VIMPROFILE_STOP("bore_extract_projects_from_sln");
-
-    BORE_VIMPROFILE_START;
-    if (FAIL == bore_append_solution_files(b, bore_str(b, b->sln_path)))
-        goto fail;
-    BORE_VIMPROFILE_STOP("bore_append_solution_files");
+    BORE_VIMPROFILE_STOP("bore_extract_projects_and_files_from_sln");
 
     BORE_VIMPROFILE_START;
     if (FAIL == bore_extract_files_from_projects(b))
@@ -1229,23 +1280,23 @@ void ex_boreproj __ARGS((exarg_T *eap))
 {
     if (!g_bore) {
         EMSG(_("Load a solution first with boresln"));
-    } else if (*eap->arg == NUL) {
-        do_cmdline_cmd("let g:bore_proj_path");
     } else {
         char buf[BORE_MAX_PATH];
-        char mess[100];
+        char mess[BORE_MAX_PATH];
+        char* arg = (NULL != eap->arg && '\0' != eap->arg[0]) ? eap->arg : curbuf->b_fname;
 
-        bore_proj_t* proj = bore_find_project(eap->arg);
+        bore_proj_t* proj = bore_find_project(arg);
         if (NULL != proj) {
             char *slndir = bore_str(g_bore, g_bore->sln_dir);
             int slndirlen = strlen(slndir);
-            char *fn = bore_str(g_bore, proj->project_path);
+            char *fn = bore_str(g_bore, proj->project_file_path);
             if (STRNICMP(fn, slndir, slndirlen) == 0)
                 fn += slndirlen;
 
             sprintf(buf, "let g:bore_proj_path=\'%s\'", fn);
             do_cmdline_cmd(buf);
-            vim_snprintf(mess, 100, "Project found: %s", bore_str(g_bore, proj->project_name));
+            vim_snprintf(mess, BORE_MAX_PATH, "Project sln path: %s, Project file path: %s",
+                bore_str(g_bore, proj->project_sln_name), bore_str(g_bore, proj->project_file_path));
             MSG(_(mess));
         }
         else {
@@ -1354,63 +1405,101 @@ void ex_borebuild __ARGS((exarg_T *eap))
         EMSG(_("Load a solution first with boresln"));
     } else {
         char cmd[1024];
-        char* proj_file = NULL;
+        bore_proj_t* proj = NULL;
         char* src_file = NULL;
-        char* target = eap->forceit ? "rebuild" : "build";
         char* platform = strstr(bore_str(g_bore, g_bore->sln_path), "vim_vs2010") != 0 ? "Win32" : "x64";
         char* configuration = "Release";
         char* slndir = bore_str(g_bore, g_bore->sln_dir);
         int slndirlen = strlen(slndir);
 
-        if (eap->cmdidx == CMD_borebuildsln) {
-            proj_file = bore_str(g_bore, g_bore->sln_path);
-        }
-        else {
-            if (NULL == eap->arg || '\0' == eap->arg[0])
-                src_file = curbuf->b_fname;
-            else if (eap->cmdidx == CMD_borebuildproj)
-                proj_file = eap->arg;
-            else if (eap->cmdidx == CMD_borebuildfile)
+        if (eap->cmdidx == CMD_borebuildfile) {
+            // Specififed source file argument
+            if (NULL != eap->arg && '\0' != eap->arg[0]) {
                 src_file = eap->arg;
-
-            if (NULL == proj_file || '\0' == proj_file[0]) {
-                if (NULL == src_file || '\0' == src_file) {
-                    EMSG(_("No file specified, and no current buffer"));
-                    return;
-                }
-                bore_proj_t* proj = bore_find_project(src_file);
+                proj = bore_find_project(src_file);
                 if (NULL == proj) {
-                    EMSG(_("Could not find project for current buffer"));
+                    EMSG(_("borebuildfile: Failed to lookup specified file"));
                     return;
                 }
-                proj_file = bore_str(g_bore, proj->project_path);
+            }
+            // Current buffer
+            else if (NULL != curbuf->b_fname && '\0' != curbuf->b_fname) {
+                src_file = curbuf->b_fname;
+                proj = bore_find_project(src_file);
+                if (NULL == proj) {
+                    EMSG(_("borebuildfile: Failed to lookup current bufffer"));
+                    return;
+                }
+            }
+            else {
+                EMSG(_("borebuildfile: No file specified, and no current buffer"));
+                return;
             }
         }
-
-        if (STRNICMP(proj_file, slndir, slndirlen) == 0)
-            proj_file += slndirlen;
+        else if (eap->cmdidx == CMD_borebuildproj) {
+            // Specififed project name argument
+            if (NULL != eap->arg && '\0' != eap->arg[0]) {
+                bore_proj_t* projects = (bore_proj_t*)g_bore->proj_alloc.base;
+                int i;
+                for (i = 0; i < g_bore->proj_count; ++i) {
+                    if (0 == STRICMP(eap->arg, bore_str(g_bore, projects[i].project_sln_name))) {
+                        proj = &projects[i];
+                        break;
+                    }
+                }
+                if (NULL == proj) {
+                    EMSG(_("borebuildproj: Failed to lookup specified project"));
+                    return;
+                }
+            }
+            // Current buffer
+            else if (NULL != curbuf->b_fname && '\0' != curbuf->b_fname) {
+                proj = bore_find_project(curbuf->b_fname);
+                if (NULL == proj) {
+                    EMSG(_("borebuildproj: Failed to lookup current buffer"));
+                    return;
+                }
+            }
+            else {
+                EMSG(_("borebuildproj: No project specified, and no current buffer"));
+                return;
+            }
+            // TODO-pkack: Can target Build/Rebuild/Clean be specified for a specific project?
+            // The following MSDN example does not work
+            // https://msdn.microsoft.com/en-us/library/ms171486.aspx
+            // msbuild SlnFolders.sln /t:NotInSlnfolder:Rebuild;NewFolder\InSolutionFolder:Clean 
+            // Note: '.' in project names must be replaced with '_' for msbuild targets
+        }
 
         if (eap->cmdidx == CMD_borebuildfile) {
+            char* proj_file = bore_str(g_bore, proj->project_file_path);
+            if (STRNICMP(proj_file, slndir, slndirlen) == 0)
+                proj_file += slndirlen;
 
             if (STRNICMP(src_file, slndir, slndirlen) == 0)
                 src_file += slndirlen;
 
             vim_snprintf(cmd, 1024,
                 "msbuild.exe %s /t:ClCompile /p:SelectedFiles=\"%s\" /p:Platform=%s /p:Configuration=%s " \
-                "/p:BuildProjectReferences=true " \
-                "/m:%d /p:MultiProcessorCompilation=true;CL_MPCount=%d /v:q /nologo",
-                proj_file, src_file, platform, configuration,
-                g_bore->ini.cpu_cores, g_bore->ini.cpu_cores);
+                "/v:q /nologo",
+                proj_file, src_file, platform, configuration);
         }
-        else
-        {
+        else {
+            char* sln_file = bore_str(g_bore, g_bore->sln_path) + slndirlen;
+            char* target;
+            if (eap->cmdidx == CMD_borebuildproj)
+                target = bore_str(g_bore, proj->project_sln_name);
+            else
+                target = eap->forceit ? "Rebuild" : "Build";
+
             vim_snprintf(cmd, 1024,
                 "msbuild.exe %s /t:%s /p:Platform=%s /p:Configuration=%s " \
                 "/p:BuildProjectReferences=true " \
-                "/m:%d /p:MultiProcessorCompilation=true;CL_MPCount=%d /v:q /nologo",
-                proj_file, target, platform, configuration,
+                "/m:%d /p:MultiProcessorCompilation=true;CL_MPCount=%d /v:m /nologo",
+                sln_file, target, platform, configuration,
                 g_bore->ini.cpu_cores, g_bore->ini.cpu_cores);
         }
+
         MSG(_(cmd));
         bore_async_execute(cmd);
     }
