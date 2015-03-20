@@ -42,7 +42,7 @@
     <OutDir>$(SolutionDir)</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <LinkIncremental>true</LinkIncremental>
+    <LinkIncremental>false</LinkIncremental>
     <TargetName>bvim</TargetName>
     <OutDir>$(SolutionDir)</OutDir>
   </PropertyGroup>
