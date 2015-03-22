@@ -1088,8 +1088,8 @@ _WndProc(
 #ifdef FEAT_BORE
     case WM_USER + 1234:
     {
-	extern void bore_async_execute_completed();
-	bore_async_execute_completed();
+	extern void bore_async_execute_update(DWORD flags);
+	bore_async_execute_update(lParam);
 	break;
     } 
 #endif

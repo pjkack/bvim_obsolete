@@ -556,7 +556,6 @@ struct bore_async_execute_context_t
 {
     HANDLE wait_thread;
     PROCESS_INFORMATION spawned_process;
-    char result_filename[MAX_PATH];
     HANDLE result_handle;
 };
 
@@ -944,45 +943,148 @@ erret:
     EMSG(_("Could not open borebuf"));
 }
 
-void bore_async_execute_completed()
+void bore_async_execute_update(DWORD flags)
 {
-    CloseHandle(g_bore_async_execute_context.wait_thread);
-    CloseHandle(g_bore_async_execute_context.spawned_process.hThread);
-    CloseHandle(g_bore_async_execute_context.spawned_process.hProcess);
-    CloseHandle(g_bore_async_execute_context.result_handle);
+    DWORD first = 0x80000000 & flags;
+    DWORD completed = 0x40000000 & flags;
+    DWORD bytes_read = 0;
+    DWORD bytes_avail = 0;
+    int errors = 0;
+    char buffer[4096];
 
-    exarg_T eap;
-    char* title = (char*)alloc(100);
-    vim_snprintf(title, 100, "borebuild");
+    BORE_VIMPROFILE_INIT;
+    BORE_VIMPROFILE_START;
 
-    memset(&eap, 0, sizeof(eap));
-    eap.cmdidx = CMD_cgetfile;
-    eap.arg = (char*)g_bore_async_execute_context.result_filename;
-    eap.cmdlinep = &title;
-    ex_cfile(&eap);
+    for (;;)
+    {
+        BOOL result = PeekNamedPipe(
+            g_bore_async_execute_context.result_handle, 
+            NULL,
+            0,
+            NULL,
+            &bytes_avail,
+            NULL);
 
-    memset(&eap, 0, sizeof(eap));
-    eap.cmdidx = CMD_cwindow;
-    ex_copen(&eap);
+        if (!result) {
+            if (!completed)
+                EMSG(_("bore_async_execute_update: Failed to peek pipe"));
+            break;
+        }
+        else if (bytes_avail == 0) {
+            if (!completed)
+                EMSG(_("bore_async_execute_update: No available data in pipe"));
+            break;
+        }
 
-    vim_free(title);
+        result = ReadFile(
+            g_bore_async_execute_context.result_handle,
+            &buffer[1],
+            sizeof(buffer) - 3,
+            &bytes_read,
+            NULL);
 
-    g_bore_async_execute_context.wait_thread = INVALID_HANDLE_VALUE;
-    g_bore_async_execute_context.spawned_process.hThread = INVALID_HANDLE_VALUE;
-    g_bore_async_execute_context.spawned_process.hProcess = INVALID_HANDLE_VALUE;
-    g_bore_async_execute_context.result_handle = INVALID_HANDLE_VALUE;
+        if (!result) {
+            EMSG(_("bore_async_execute_update: Read file error"));
+            goto done;
+        }
+        else if (bytes_read == 0) {
+            MSG(_("bore_async_execute_update: No bytes read"));
+            goto done;
+        }
 
+        // TODO-pkack: Handle partial read lines and bytes_avail > 4093 correctly
+        // format as string expression
+        buffer[0] = '\'';
+        buffer[bytes_read + 1] = '\'';
+        buffer[bytes_read + 2] = '\0';
+
+        // TODO-pkack: Is there a way to make cgetexpr/caddexpr handle output the same way as cgetfile/caddfile
+        // quick and dirty replace of ' with " instead of escaping correctly
+        char* c = buffer + 1;
+        char* end = c + bytes_read;
+        for (; c != end; ++c)
+            if (*c == '\'')
+                *c = '\"';
+
+        // add output as error expressions
+        char* title = (char*)alloc(100);
+        vim_snprintf(title, 100, "borebuild");
+        exarg_T eap;
+        memset(&eap, 0, sizeof(eap));
+        eap.cmdidx = (first && !errors) ? CMD_cgetexpr : CMD_caddexpr;
+        eap.cmdlinep = &title;
+        eap.arg = buffer;
+        ex_cexpr(&eap);
+        vim_free(title);
+
+        ++errors;
+        if (bytes_read == bytes_avail)
+            break;
+    }
+
+    if (first && errors) {
+        exarg_T eap;
+        memset(&eap, 0, sizeof(eap));
+        eap.cmdidx = CMD_cwindow;
+        ex_copen(&eap);
+    }
     update_screen(VALID);
+    
+done:
+    if (completed) {
+        CloseHandle(g_bore_async_execute_context.wait_thread);
+        CloseHandle(g_bore_async_execute_context.spawned_process.hThread);
+        CloseHandle(g_bore_async_execute_context.spawned_process.hProcess);
+        CloseHandle(g_bore_async_execute_context.result_handle);
+        g_bore_async_execute_context.wait_thread = INVALID_HANDLE_VALUE;
+        g_bore_async_execute_context.spawned_process.hThread = INVALID_HANDLE_VALUE;
+        g_bore_async_execute_context.spawned_process.hProcess = INVALID_HANDLE_VALUE;
+        g_bore_async_execute_context.result_handle = INVALID_HANDLE_VALUE;
+        if (first && !errors)
+            MSG(_("Build success"));
+        else
+            MSG(_("Build done"));
+    }
+
+    BORE_VIMPROFILE_STOP("bore_async_update");
 }
 
 static DWORD WINAPI bore_async_execute_wait_thread(LPVOID param)
 {
     extern HWND s_hwnd;
-    DWORD result = WaitForSingleObject(g_bore_async_execute_context.spawned_process.hProcess, INFINITE);
-    assert(sizeof(WPARAM) == sizeof(&bore_async_execute_completed));
-    WPARAM wparam = (WPARAM)&bore_async_execute_completed;
-    LPARAM lparam = (result == WAIT_OBJECT_0);
-    PostMessage(s_hwnd, WM_USER + 1234, wparam, lparam);
+    DWORD result;
+    DWORD bytes_avail;
+    DWORD first = 1;
+    DWORD completed = 0;
+
+    do {
+        result = WaitForSingleObject(g_bore_async_execute_context.spawned_process.hProcess, 1000);
+
+        if (result == WAIT_TIMEOUT)
+        {
+            BOOL peek_success = PeekNamedPipe(
+                g_bore_async_execute_context.result_handle, 
+                NULL,
+                0,
+                0,
+                &bytes_avail,
+                NULL);
+
+            if (!peek_success || 0 == bytes_avail)
+                continue;
+        }
+        else {
+            completed = 1;
+        }
+
+        assert(sizeof(WPARAM) == sizeof(&bore_async_execute_update));
+        WPARAM wparam = (WPARAM)&bore_async_execute_update;
+        LPARAM lparam = (result & 0x3FFFFFFF) | (first << 31) | (completed << 30);
+        PostMessage(s_hwnd, WM_USER + 1234, wparam, lparam);
+
+        first = 0;
+    } while (completed == 0);
+
     return 0;
 }
 
@@ -995,52 +1097,53 @@ static void bore_async_execute(const char* cmdline)
 
     autowrite_all();
 
+    exarg_T eap;
+    memset(&eap, 0, sizeof(eap));
+    eap.cmdidx = CMD_cwindow;
+    ex_cclose(&eap);
+
+    HANDLE output_handle;
+    HANDLE error_handle;
+
     SECURITY_ATTRIBUTES sa_attr = {0};
     sa_attr.nLength = sizeof(sa_attr);
     sa_attr.bInheritHandle = TRUE;
     sa_attr.lpSecurityDescriptor = NULL;
 
-    if (g_bore_async_execute_context.result_filename[0] == 0) {
-        char temp_path[MAX_PATH];
+    BOOL result = CreatePipe(
+        &g_bore_async_execute_context.result_handle,
+        &output_handle,
+        &sa_attr,
+        0);
 
-        DWORD result = GetTempPathA(MAX_PATH, temp_path);
-
-        if (result == 0 || result > MAX_PATH) {
-            EMSG(_("bore_async_execute: Could get temp path"));
-            goto fail;
-        }
-
-        result = GetTempFileNameA(
-                temp_path, 
-                "bore_build", 
-                0, 
-                g_bore_async_execute_context.result_filename);
-
-        if (result == 0) {
-            EMSG(_("bore_async_execute: Could get temp filename"));
-            goto fail;
-        }
-    }
-    
-    // TODO-jkjellstrom: Doesn't seem to be possible to copen a file we still have a handle open to.
-    //                   Temp files will remain after closing the session right now.
-    g_bore_async_execute_context.result_handle = CreateFileA(
-            g_bore_async_execute_context.result_filename, 
-            GENERIC_WRITE|GENERIC_READ, 
-            FILE_SHARE_READ, 
-            &sa_attr, 
-            CREATE_ALWAYS, 
-            //FILE_ATTRIBUTE_NORMAL|FILE_FLAG_DELETE_ON_CLOSE, 
-            FILE_ATTRIBUTE_NORMAL, 
-            NULL);
-
-    if (g_bore_async_execute_context.result_handle == INVALID_HANDLE_VALUE) {
-        EMSG(_("bore_async_execute: Could not create temp result file"));
+    if (!result) {
+        EMSG(_("bore_async_execute: Failed to create pipe"));
         goto fail;
     }
 
-    //SetFilePointer(g_bore_async_execute_context.result_handle, 0, 0, FILE_BEGIN);
-    //SetEndOfFile(g_bore_async_execute_context.result_handle);
+    result = SetHandleInformation(
+        g_bore_async_execute_context.result_handle,
+        HANDLE_FLAG_INHERIT,
+        0);
+
+    if (!result) {
+        EMSG(_("bore_async_execute: Failed to remove inheritable flag for read handle"));
+        goto fail;
+    }
+
+    result = DuplicateHandle(
+        GetCurrentProcess(),
+        output_handle,
+        GetCurrentProcess(),
+        &error_handle,
+        0,
+        TRUE,
+        DUPLICATE_SAME_ACCESS);
+
+    if (!result) {
+        EMSG(_("bore_async_execute: Failed to duplicate stdout write handle for stderr"));
+        goto fail;
+    }
 
     STARTUPINFO startup_info = {0};
     char cmd[1024];
@@ -1048,8 +1151,8 @@ static void bore_async_execute(const char* cmdline)
     startup_info.cb = sizeof(startup_info);
     startup_info.dwFlags = STARTF_USESTDHANDLES;
     startup_info.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    startup_info.hStdOutput = g_bore_async_execute_context.result_handle;
-    startup_info.hStdError = g_bore_async_execute_context.result_handle;
+    startup_info.hStdOutput = output_handle;
+    startup_info.hStdError = error_handle;
 
     if (-1 == _snprintf_s(cmd, sizeof(cmd), sizeof(cmd), "cmd.exe /c \"%s\"", cmdline)) {
         EMSG(_("bore_async_execute: Command line is too long"));
@@ -1078,6 +1181,9 @@ static void bore_async_execute(const char* cmdline)
         goto fail;
     }
 
+    CloseHandle(output_handle);
+    CloseHandle(error_handle);
+
     DWORD thread_id = 0;
 
     g_bore_async_execute_context.wait_thread = CreateThread(
@@ -1089,8 +1195,6 @@ static void bore_async_execute(const char* cmdline)
             &thread_id);
 
     if (g_bore_async_execute_context.wait_thread == INVALID_HANDLE_VALUE) {
-        CloseHandle(g_bore_async_execute_context.spawned_process.hThread);
-        CloseHandle(g_bore_async_execute_context.spawned_process.hProcess);
         EMSG(_("bore_async_execute: Failed to spawn wait thread"));
         goto fail;
     }
@@ -1098,11 +1202,16 @@ static void bore_async_execute(const char* cmdline)
     return;
 
 fail:
+    CloseHandle(output_handle);
+    CloseHandle(error_handle);
     CloseHandle(g_bore_async_execute_context.wait_thread);
     CloseHandle(g_bore_async_execute_context.spawned_process.hThread);
     CloseHandle(g_bore_async_execute_context.spawned_process.hProcess);
     CloseHandle(g_bore_async_execute_context.result_handle);
     g_bore_async_execute_context.wait_thread = INVALID_HANDLE_VALUE;
+    g_bore_async_execute_context.spawned_process.hThread = INVALID_HANDLE_VALUE;
+    g_bore_async_execute_context.spawned_process.hProcess = INVALID_HANDLE_VALUE;
+    g_bore_async_execute_context.result_handle = INVALID_HANDLE_VALUE;
 }
 
 
@@ -1494,14 +1603,18 @@ void ex_borebuild __ARGS((exarg_T *eap))
 
             vim_snprintf(cmd, 1024,
                 "msbuild.exe %s /t:%s /p:Platform=%s /p:Configuration=%s " \
+                "/v:q /nologo " \
                 "/p:BuildProjectReferences=true " \
-                "/m:%d /p:MultiProcessorCompilation=true;CL_MPCount=%d /v:m /nologo",
+                "/m:%d /p:MultiProcessorCompilation=true;CL_MPCount=%d",
                 sln_file, target, platform, configuration,
                 g_bore->ini.cpu_cores, g_bore->ini.cpu_cores);
         }
 
-        MSG(_(cmd));
         bore_async_execute(cmd);
+        char* c = strstr(cmd, " /v:");
+        if (c)
+            *c = '\0';
+        MSG(_(cmd));
     }
 }
 
