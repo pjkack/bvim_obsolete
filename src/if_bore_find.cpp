@@ -291,6 +291,9 @@ static DWORD WINAPI search_worker(struct search_context_t* search_context)
 
         bore_file_t* const files = (bore_file_t*)search_context->b->file_alloc.base;
 
+        if (strstr(bore_str(search_context->b, files[file_index].file), "\\__Generated"))
+            continue;
+
         search_one_file(search_context, bore_str(search_context->b, files[file_index].file), file_index);
 
         if (search_context->was_truncated > 1)

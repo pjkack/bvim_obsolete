@@ -133,9 +133,6 @@ static int bore_is_excluded_file(const char* path)
             return 1;
     }
 
-    if (strstr(path, "\\__Generated"))
-        return 1;
-
     return 0;
 }
 
